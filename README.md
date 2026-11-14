@@ -2,7 +2,7 @@
 
 **Your repository is an ecosystem. Your code is alive.**
 
-![Timelapse of the built-in demo: fish multiply as commits arrive, the water turns murky and the population collapses while CI is failing, then it recovers after fixes and merges](docs/demo.gif)
+![Timelapse of the built-in demo: glowing fish multiply as commits arrive, a red tide spreads and the population collapses while CI is failing, then it recovers after fixes and merges](docs/demo.gif)
 
 *The built-in demo as a timelapse: 30 days of a fictional repository replayed as a living aquarium. It takes about three minutes at normal speed.*
 
@@ -18,17 +18,19 @@ The timelapse is the built-in synthetic demo with seed 1: 67 fictional repositor
 
 | Replay | Repository activity | In the aquarium |
 | --- | --- | --- |
-| Days 0–9 | Two commits a day, one pull request opened | Every commit drops food and the population grows from 64 to about 115 |
-| Days 9–16 | Three CI workflows fail on three branches while commits slow down | The water turns murky, every organism pays an energy penalty, and the population falls to about 33 |
-| Days 16–30 | Each workflow passes again, two pull requests merge, and commits return at three a day | The water clears gradually, each merge releases a pulse of food, and the population recovers to about 85 |
+| Days 0–9 | Two commits a day, one pull request opened | Every commit drops food and the population grows from 64 to about 110 |
+| Days 9–16 | Three CI workflows fail on three branches while commits slow down | A red tide spreads, every organism pays an energy penalty, and the population falls to about 30 |
+| Days 16–30 | Each workflow passes again, two pull requests merge, and commits return at three a day | The water clears gradually, each merge releases a pulse of food, and the population recovers to about 80 |
 
 How to read the tank:
 
-- **Fish colour** is the lineage, one per observed branch. Shade varies with each fish's own `hue` gene.
+- **Glow colour** is the lineage, one per observed branch. Fish of a lineage school together, and each fish's own `hue` gene shifts its shade slightly.
 - **Brightness** is energy: a dim fish is a hungry fish.
-- **Green dots** are food. Commits and merges add it; a small baseline supply never stops.
-- **Murky water** means a CI workflow is failing, or the tank is still recovering from one that was.
-- **A dashed line** links two lineages when a pull request opens between their branches; **a solid line** marks a merge.
+- **Green specks** are food. Commits and merges add it; a small baseline supply never stops.
+- **A red tide** means a CI workflow is failing, or the tank is still recovering from one that was.
+- **A dashed violet arc** joins a fish from each lineage when a pull request opens between their branches; **a solid white arc** marks a merge.
+- **A flare** is a birth; **a glow that dims and sinks** is a death.
+- **The timeline** under the tank marks every event: red for a CI failure, white for a merge.
 - **The panel on the right** lists each replayed event, the rule it triggered, and a link to its GitHub source when the data is real.
 
 The population figures are simulated measurements from one seeded run. They are not benchmarks and say nothing about code quality.
@@ -161,10 +163,10 @@ flowchart TD
 
 **Current implementation (weeks 1 and 2):** a single Vite + TypeScript package with no runtime dependencies.
 
-- `src/sim.ts`: the simulation and the mapping rules. It runs in a Web Worker (`src/worker.ts`).
+- `src/sim.ts`: the simulation and the mapping rules. Fish turn gradually, cruise level, and school with their own lineage. It runs in a Web Worker (`src/worker.ts`).
 - `src/dataset.ts`: validates, deduplicates, and freezes repository records, and imports one public repository.
 - `src/demo.ts`: the fictional demo history.
-- `src/main.ts`: Canvas 2D rendering, controls, and the event log.
+- `src/main.ts` and `src/style.css`: Canvas 2D rendering at display frame rate, blended between simulation ticks, plus the controls and event log. The two typefaces (Fraunces and Martian Mono) are bundled at build time, so the page still loads nothing from the network.
 
 The import calls GitHub's public REST API directly from the browser, so there is no server and no token. That limits it to GitHub's unauthenticated quota of 60 requests per hour (four per import) and to the 100 most recent commits, pull requests, and workflow runs; whatever is cut off is listed on screen. React, PixiJS, the workspace split, Fastify, Zod, and IndexedDB will be introduced when a later milestone needs them.
 

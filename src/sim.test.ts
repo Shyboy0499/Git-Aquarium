@@ -36,7 +36,8 @@ test('the ecosystem stays within its bounds and stays alive', () => {
     if (!(s.penalty >= 0 && s.penalty <= P.maxPenalty)) throw new Error(`penalty ${s.penalty} at tick ${s.tick}`)
     for (const o of s.organisms) {
       if (!(o.energy > 0 && o.energy <= maxEnergy(o.genome))) throw new Error(`energy ${o.energy} at tick ${s.tick}`)
-      if (!(o.x >= 0 && o.x <= P.width && o.y >= 0 && o.y <= P.height)) throw new Error(`escaped at tick ${s.tick}`)
+      if (!(o.x >= 0 && o.x <= P.width && o.y >= 0 && o.y <= P.height && o.z >= 0 && o.z <= P.depth)) throw new Error(`escaped at tick ${s.tick}`)
+      if (Math.abs(Math.hypot(o.ux, o.uy, o.uz) - 1) > 1e-9) throw new Error(`direction is not a unit vector at tick ${s.tick}`)
       for (const t of TRAITS) {
         if (!(o.genome[t] >= 0 && o.genome[t] <= 1)) throw new Error(`${t}=${o.genome[t]} at tick ${s.tick}`)
       }

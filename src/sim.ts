@@ -13,9 +13,12 @@ export interface Organism {
   lineage: number
   genome: Genome
   parents: [number, number] | null // null for the founding population
-  x: number
-  y: number
-  heading: number
+  x: number // across the tank
+  y: number // height above the floor
+  z: number // depth, away from the viewer
+  ux: number // unit vector: the direction it is swimming
+  uy: number
+  uz: number
   energy: number
   age: number // ticks
   cooldown: number // ticks until it may reproduce again
@@ -26,7 +29,7 @@ export interface State {
   rng: number // mulberry32 state, kept in the state so a snapshot resumes exactly
   nextId: number
   organisms: Organism[]
-  food: { x: number; y: number }[]
+  food: { x: number; y: number; z: number }[]
   births: number
   deaths: number
   mutations: number
@@ -62,6 +65,7 @@ export const RULES: Record<EventKind, { id: string; effect: string }> = {
 export const P = {
   width: 800,
   height: 500,
+  depth: 260,
   ticksPerSecond: 20,
   startPopulation: 64,
   maxPopulation: 200,
@@ -78,8 +82,8 @@ export const P = {
   moveCost: 0.008,
   senseCost: 0.0001,
   // Swimming: fish turn gradually, cruise level, and school with their own lineage.
-  turnRate: 0.12, // max heading change per tick (radians) while cruising
-  chaseTurnRate: 0.3, // ...and while heading for food
+  turnRate: 0.08, // max change of direction per tick (radians) while cruising
+  chaseTurnRate: 0.18, // ...and while heading for food
   minTurnSpeed: 0.35, // fraction of speed kept through a sharp turn
   wander: 0.25, // sideways meander while cruising
   level: 0.6, // below 1, cruising fish favour horizontal travel
@@ -94,15 +98,15 @@ export const P = {
   breedEnergy: 0.6, // fraction of max energy needed to breed
   breedCost: 0.25, // fraction of max energy each parent gives the child
   cooldown: 200,
-  mateRange: 140,
+  mateRange: 170,
   mutationStep: 0.1,
 }
 
 export const maxEnergy = (g: Genome) => 60 + 80 * g.bodyLength
 const lifespanTicks = (g: Genome) => 1200 + 3600 * g.lifespan
-const sightRange = (g: Genome) => 30 + 120 * g.perceptionRange
+const sightRange = (g: Genome) => 40 + 155 * g.perceptionRange
 const swimSpeed = (g: Genome) => 0.8 + 2.2 * g.speed
-const eatRange = (g: Genome) => 4 + 6 * g.bodyLength
+const eatRange = (g: Genome) => 6 + 6 * g.bodyLength
 const mutationChance = (g: Genome) => 0.02 + 0.18 * g.mutationRate
 
 function rand(s: State): number {
@@ -113,7 +117,12 @@ function rand(s: State): number {
   return ((t ^ (t >>> 14)) >>> 0) / 4294967296
 }
 
-const spot = (s: State) => ({ x: rand(s) * P.width, y: rand(s) * P.height })
+const spot = (s: State) => ({ x: rand(s) * P.width, y: rand(s) * P.height, z: rand(s) * P.depth })
+// A random level direction: fish start out, and are born, swimming horizontally.
+function level(s: State) {
+  const yaw = rand(s) * 2 * Math.PI
+  return { ux: Math.cos(yaw), uy: 0, uz: Math.sin(yaw) }
+}
 
 // One lineage per observed branch (R-BRANCH-LINEAGE); the starting population is shared between them.
 export function createState(seed: number, lineages = 4): State {
@@ -127,7 +136,7 @@ export function createState(seed: number, lineages = 4): State {
     for (const t of TRAITS) genome[t] = rand(s)
     s.organisms.push({
       id: s.nextId++, lineage: i % lineages, genome, parents: null,
-      ...spot(s), heading: rand(s) * 2 * Math.PI,
+      ...spot(s), ...level(s),
       energy: maxEnergy(genome) * 0.6,
       age: Math.floor(rand(s) * lifespanTicks(genome) * 0.5), // mixed ages so founders don't die together
       cooldown: 0,
@@ -161,8 +170,9 @@ export function step(s: State, events: readonly GitEvent[] = []): void {
 
   // 3-5. Perception, movement, eating, energy, age.
   // Directions as they were when the tick began, so schooling does not depend on update order.
-  const hx = s.organisms.map((o) => Math.cos(o.heading))
-  const hy = s.organisms.map((o) => Math.sin(o.heading))
+  const hx = s.organisms.map((o) => o.ux)
+  const hy = s.organisms.map((o) => o.uy)
+  const hz = s.organisms.map((o) => o.uz)
   for (let k = 0; k < s.organisms.length; k++) {
     const o = s.organisms[k]
     const g = o.genome
@@ -174,7 +184,8 @@ export function step(s: State, events: readonly GitEvent[] = []): void {
     for (let i = 0; i < s.food.length; i++) {
       const dx = s.food[i].x - o.x
       const dy = s.food[i].y - o.y
-      const d = dx * dx + dy * dy
+      const dz = s.food[i].z - o.z
+      const d = dx * dx + dy * dy + dz * dz
       if (d < best) { best = d; target = i }
     }
 
@@ -182,67 +193,97 @@ export function step(s: State, events: readonly GitEvent[] = []): void {
     const chasing = target >= 0
     let dx = hx[k]
     let dy = hy[k]
+    let dz = hz[k]
     if (chasing) {
       const gap = Math.sqrt(best) || 1
       dx = (s.food[target].x - o.x) / gap
       dy = (s.food[target].y - o.y) / gap
+      dz = (s.food[target].z - o.z) / gap
     }
     // ponytail: O(organisms^2) neighbour scan, 40k checks at the cap; share a grid with the food scan if the cap grows
-    let cx = 0, cy = 0, ax = 0, ay = 0, mates = 0
+    let cx = 0, cy = 0, cz = 0, ax = 0, ay = 0, az = 0, mates = 0
     for (let j = 0; j < s.organisms.length; j++) {
       if (j === k) continue
       const m = s.organisms[j]
       const mx = m.x - o.x
       const my = m.y - o.y
-      const d2 = mx * mx + my * my
+      const mz = m.z - o.z
+      const d2 = mx * mx + my * my + mz * mz
       if (d2 > 0 && d2 < P.personalSpace * P.personalSpace) {
         const d = Math.sqrt(d2)
         const push = (P.separation * (1 - d / P.personalSpace)) / d
         dx -= mx * push
         dy -= my * push
+        dz -= mz * push
       }
       if (!chasing && m.lineage === o.lineage && d2 < P.schoolRange * P.schoolRange) {
-        cx += mx; cy += my; ax += hx[j]; ay += hy[j]; mates++
+        cx += mx; cy += my; cz += mz; ax += hx[j]; ay += hy[j]; az += hz[j]; mates++
       }
     }
     if (!chasing) {
       if (mates) {
         dx += (P.cohesion * cx) / mates / P.schoolRange + (P.alignment * ax) / mates
         dy += (P.cohesion * cy) / mates / P.schoolRange + (P.alignment * ay) / mates
+        dz += (P.cohesion * cz) / mates / P.schoolRange + (P.alignment * az) / mates
       }
-      const drift = (rand(s) - 0.5) * 2 * P.wander
-      dx -= hy[k] * drift
-      dy += hx[k] * drift
+      dx += (rand(s) - 0.5) * 2 * P.wander
+      dy += (rand(s) - 0.5) * P.wander
+      dz += (rand(s) - 0.5) * 2 * P.wander
       dy *= P.level
       if (o.x < P.wallMargin) dx += P.wallPush * (1 - o.x / P.wallMargin)
       if (o.x > P.width - P.wallMargin) dx -= P.wallPush * (1 - (P.width - o.x) / P.wallMargin)
       if (o.y < P.wallMargin) dy += P.wallPush * (1 - o.y / P.wallMargin)
       if (o.y > P.height - P.wallMargin) dy -= P.wallPush * (1 - (P.height - o.y) / P.wallMargin)
+      if (o.z < P.wallMargin) dz += P.wallPush * (1 - o.z / P.wallMargin)
+      if (o.z > P.depth - P.wallMargin) dz -= P.wallPush * (1 - (P.depth - o.z) / P.wallMargin)
     }
 
-    // Turn gradually toward that direction, slowing through sharp turns.
-    let turn = Math.atan2(dy, dx) - o.heading
-    turn -= 2 * Math.PI * Math.round(turn / (2 * Math.PI))
-    const limit = chasing ? P.chaseTurnRate : P.turnRate
-    o.heading += Math.max(-limit, Math.min(limit, turn))
-    const move = speed * Math.max(P.minTurnSpeed, Math.cos(turn))
-    o.x += Math.cos(o.heading) * move
-    o.y += Math.sin(o.heading) * move
+    // Swing the swimming direction toward the wanted one by at most the turn rate.
+    const want = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1
+    dx /= want; dy /= want; dz /= want
+    const along = o.ux * dx + o.uy * dy + o.uz * dz // cosine of the angle still to turn
+    let wx = dx - along * o.ux // the part of the wanted direction that is sideways to the current one
+    let wy = dy - along * o.uy
+    let wz = dz - along * o.uz
+    let side = Math.sqrt(wx * wx + wy * wy + wz * wz)
+    if (side < 1e-9 && along < 0) { // exactly behind: any sideways direction will do, so turn level
+      wx = -o.uz; wy = 0; wz = o.ux
+      side = Math.sqrt(wx * wx + wz * wz)
+      if (side < 1e-9) { wx = 1; side = 1 }
+    }
+    if (side >= 1e-9) {
+      const turn = Math.min(chasing ? P.chaseTurnRate : P.turnRate, Math.atan2(side, along))
+      const c = Math.cos(turn)
+      const t = Math.sin(turn) / side
+      o.ux = o.ux * c + wx * t
+      o.uy = o.uy * c + wy * t
+      o.uz = o.uz * c + wz * t
+      const len = Math.sqrt(o.ux * o.ux + o.uy * o.uy + o.uz * o.uz) // stop rounding error building up
+      o.ux /= len; o.uy /= len; o.uz /= len
+    }
+    const move = speed * Math.max(P.minTurnSpeed, along) // slow through sharp turns
+    o.x += o.ux * move
+    o.y += o.uy * move
+    o.z += o.uz * move
     if (o.x < 0 || o.x > P.width) { // the glass itself, if steering was not enough
       o.x = Math.min(P.width, Math.max(0, o.x))
-      o.heading = Math.PI - o.heading
+      o.ux = -o.ux
     }
     if (o.y < 0 || o.y > P.height) {
       o.y = Math.min(P.height, Math.max(0, o.y))
-      o.heading = -o.heading
+      o.uy = -o.uy
     }
-    o.heading -= 2 * Math.PI * Math.round(o.heading / (2 * Math.PI)) // keep within -pi..pi
+    if (o.z < 0 || o.z > P.depth) {
+      o.z = Math.min(P.depth, Math.max(0, o.z))
+      o.uz = -o.uz
+    }
 
     if (chasing) {
       const fx = s.food[target].x - o.x
       const fy = s.food[target].y - o.y
+      const fz = s.food[target].z - o.z
       const reach = eatRange(g)
-      if (fx * fx + fy * fy <= reach * reach) {
+      if (fx * fx + fy * fy + fz * fz <= reach * reach) {
         o.energy = Math.min(maxEnergy(g), o.energy + P.foodEnergy * (0.6 + 0.8 * g.metabolism))
         s.food[target] = s.food[s.food.length - 1]
         s.food.pop()
@@ -275,7 +316,8 @@ export function step(s: State, events: readonly GitEvent[] = []): void {
       const b = alive[j]
       const dx = b.x - a.x
       const dy = b.y - a.y
-      if (b.lineage !== a.lineage || !ready(b) || dx * dx + dy * dy > P.mateRange * P.mateRange) continue
+      const dz = b.z - a.z
+      if (b.lineage !== a.lineage || !ready(b) || dx * dx + dy * dy + dz * dz > P.mateRange * P.mateRange) continue
       alive.push(breed(s, a, b))
       break
     }
@@ -302,7 +344,7 @@ function breed(s: State, a: Organism, b: Organism): Organism {
   s.births++
   return {
     id: s.nextId++, lineage: a.lineage, genome, parents: [a.id, b.id],
-    x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, heading: rand(s) * 2 * Math.PI,
+    x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, z: (a.z + b.z) / 2, ...level(s),
     energy: Math.min(maxEnergy(genome), paidA + paidB), age: 0, cooldown: 0,
   }
 }

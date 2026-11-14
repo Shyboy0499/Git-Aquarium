@@ -26,7 +26,10 @@
     <main class="deck">
       <div class="column">
         <section class="tank" aria-label="Aquarium">
-          <canvas role="img" aria-label="Aquarium: simulated organisms foraging for food"></canvas>
+          <div class="view">
+            <canvas id="scene" role="img" aria-label="Aquarium: simulated organisms foraging for food"></canvas>
+            <canvas id="overlay" aria-hidden="true"></canvas>
+          </div>
           <p id="date" class="caption"></p>
           <p id="alarm" class="caption" hidden></p>
           <div class="transport">

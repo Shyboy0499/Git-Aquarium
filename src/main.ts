@@ -5,6 +5,7 @@ import './style.css'
 import { importRepo, type Dataset } from './dataset'
 import { demo } from './demo'
 import { P, RULES, maxEnergy, type EventKind, type Organism, type State } from './sim'
+import { COLORS, createTank, type Swimmer } from './tank'
 import type { Command } from './worker'
 
 const $ = <T extends HTMLElement>(selector: string) => document.querySelector<T>(selector)!
@@ -21,76 +22,26 @@ const H = P.height
 const TAU = 2 * Math.PI
 const TICK_MS = 1000 / P.ticksPerSecond
 const LINK_TICKS = 200 // how long a pull request stays drawn
-const HUES = [186, 322, 42, 150, 268, 14, 96, 218] // one glow colour per lineage
-const hue = (lineage: number) => HUES[lineage % HUES.length]
 const KIND: Record<EventKind, string> = {
   COMMIT_OBSERVED: 'Commit observed', PR_OPENED: 'PR opened', PR_MERGED: 'PR merged',
   CI_FAILED: 'CI failed', CI_PASSED: 'CI passed',
 }
 
-// ---- Canvas layers ------------------------------------------------------------------------------
+// ---- Canvases ----------------------------------------------------------------------------------
 
+const overlay = $<HTMLCanvasElement>('#overlay') // pull request arcs and labels, drawn over the 3D view
+const tank = (() => {
+  try {
+    return createTank($<HTMLCanvasElement>('#scene'))
+  } catch { // no WebGL: the readouts and event log still work
+    $('.view').replaceChildren(el('p', 'The aquarium view needs WebGL, which this browser did not provide. The measurements and event log below still work.'))
+  }
+})()
 const dpr = Math.min(2, window.devicePixelRatio || 1)
-function layer(target = document.createElement('canvas')) {
-  target.width = W * dpr
-  target.height = H * dpr
-  const c = target.getContext('2d')!
-  c.scale(dpr, dpr)
-  return c
-}
-const ctx = layer($<HTMLCanvasElement>('canvas'))
-const backdrop = layer() // painted once
-
-function sprite(color: (alpha: number) => string) {
-  const c = document.createElement('canvas')
-  c.width = c.height = 64
-  const g = c.getContext('2d')!
-  const glow = g.createRadialGradient(32, 32, 0, 32, 32, 32)
-  glow.addColorStop(0, color(0.9))
-  glow.addColorStop(0.35, color(0.25))
-  glow.addColorStop(1, color(0))
-  g.fillStyle = glow
-  g.fillRect(0, 0, 64, 64)
-  return c
-}
-const glows = HUES.map((h) => sprite((a) => `hsla(${h}, 95%, 62%, ${a})`))
-const plankton = sprite((a) => `rgba(150, 255, 200, ${a})`)
-const bloom = sprite((a) => `rgba(255, 40, 70, ${a})`)
-
-{
-  const c = backdrop
-  const water = c.createLinearGradient(0, 0, 0, H)
-  water.addColorStop(0, '#07304a')
-  water.addColorStop(0.45, '#041a2c')
-  water.addColorStop(1, '#010810')
-  c.fillStyle = water
-  c.fillRect(0, 0, W, H)
-  for (const [x, width, alpha] of [[120, 90, 0.07], [330, 140, 0.05], [560, 70, 0.06], [700, 110, 0.04]]) { // light shafts
-    const shaft = c.createLinearGradient(0, 0, 0, H * 0.8)
-    shaft.addColorStop(0, `rgba(140, 240, 255, ${alpha})`)
-    shaft.addColorStop(1, 'rgba(140, 240, 255, 0)')
-    c.fillStyle = shaft
-    c.beginPath()
-    c.moveTo(x, 0)
-    c.lineTo(x + width, 0)
-    c.lineTo(x + width - 140, H * 0.8)
-    c.lineTo(x - 200, H * 0.8)
-    c.fill()
-  }
-  for (const [base, height, color] of [[H - 30, 14, '#052033'], [H - 14, 9, '#03141f']] as const) { // seabed
-    c.fillStyle = color
-    c.beginPath()
-    c.moveTo(0, H)
-    for (let x = 0; x <= W; x += 20) c.lineTo(x, base + Math.sin(x * 0.013 + base) * height + Math.sin(x * 0.041) * height * 0.4)
-    c.lineTo(W, H)
-    c.fill()
-  }
-  const vignette = c.createRadialGradient(W / 2, H * 0.45, H * 0.35, W / 2, H / 2, W * 0.72)
-  vignette.addColorStop(0, 'rgba(0, 0, 0, 0)')
-  vignette.addColorStop(1, 'rgba(0, 4, 10, 0.75)')
-  c.fillStyle = vignette
-  c.fillRect(0, 0, W, H)
-}
+overlay.width = W * dpr
+overlay.height = H * dpr
+const ctx = overlay.getContext('2d')!
+ctx.scale(dpr, dpr)
 
 // ---- Replay state -------------------------------------------------------------------------------
 
@@ -100,8 +51,8 @@ let from = new Map<number, Organism>() // the snapshot before it, for smooth mot
 let arrived = 0
 let running = true
 let shown = -1 // event cursor the log currently reflects
-interface Effect { x: number; y: number; at: number; lineage: number; birth: boolean }
-let effects: Effect[] = []
+const born = new Map<number, number>() // when each newborn first appeared, so it can grow in
+let fading: { o: Organism; at: number }[] = [] // the recently dead, shrinking and sinking
 
 const worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' })
 const send = (c: Command) => worker.postMessage(c)
@@ -110,12 +61,17 @@ worker.onmessage = (e: MessageEvent<State>) => {
   const now = performance.now()
   if (!cur || next.tick < cur.tick) { // a fresh replay: nothing to blend from
     from = new Map()
-    effects = []
+    born.clear()
+    fading = []
   } else if (next.tick > cur.tick) {
     from = new Map(cur.organisms.map((o) => [o.id, o]))
     const alive = new Set(next.organisms.map((o) => o.id))
-    for (const o of next.organisms) if (!from.has(o.id)) effects.push({ x: o.x, y: o.y, at: now, lineage: o.lineage, birth: true })
-    for (const o of cur.organisms) if (!alive.has(o.id)) effects.push({ x: o.x, y: o.y, at: now, lineage: o.lineage, birth: false })
+    for (const o of next.organisms) if (!from.has(o.id)) born.set(o.id, now)
+    for (const o of cur.organisms) {
+      if (alive.has(o.id)) continue
+      born.delete(o.id)
+      fading.push({ o, at: now })
+    }
   }
   cur = next
   arrived = now
@@ -153,7 +109,7 @@ function use(d: Dataset) {
 
   $('#legend').replaceChildren(...d.branches.map((name, i) => {
     const li = el('li')
-    li.style.setProperty('--c', `hsl(${hue(i)} 90% 62%)`)
+    li.style.setProperty('--c', COLORS[i % COLORS.length])
     li.append(el('i'), el('span', name), el('b'), el('u'))
     return li
   }))
@@ -222,7 +178,7 @@ function report(s: State) {
   const alarm = $('#alarm')
   alarm.hidden = stress === 0
   alarm.textContent = s.failing.length
-    ? `Red tide · ${s.failing.length} CI ${s.failing.length === 1 ? 'group' : 'groups'} failing`
+    ? `Murky water · ${s.failing.length} CI ${s.failing.length === 1 ? 'group' : 'groups'} failing`
     : `Water clearing · stress ${stress}%`
 
   if (s.cursor === shown) return
@@ -253,147 +209,47 @@ function report(s: State) {
 }
 
 // ---- The tank (every animation frame) -----------------------------------------------------------
-// Rendering only reads state; it never changes the simulation.
 
 let anim = 0 // seconds of animation; stands still while paused
 let lastFrame = 0
-let tide = 0 // displayed water stress, eased toward the simulated value
-const WAKE = 32 // numbers kept per fish: its last 16 tail positions, newest first
-let wakes = new Map<number, number[]>()
+let murk = 0 // displayed water stress, eased toward the simulated value
 
 function frame(now: number) {
   requestAnimationFrame(frame)
   const dt = Math.min(0.1, (now - lastFrame) / 1000)
   lastFrame = now
-  if (!cur) return
+  if (!cur || !tank) return
   const s = cur
   if (running) anim += dt
   const blend = Math.min(1, (now - arrived) / TICK_MS)
-  tide += (s.penalty / P.maxPenalty - tide) * 0.04
+  murk += (s.penalty / P.maxPenalty - murk) * 0.03
 
-  ctx.globalCompositeOperation = 'source-over'
-  ctx.globalAlpha = 1
-  ctx.drawImage(backdrop.canvas, 0, 0, W, H)
-
-  if (tide > 0.005) { // red tide while CI groups are failing
-    ctx.fillStyle = `rgba(110, 6, 24, ${0.4 * tide})`
-    ctx.fillRect(0, 0, W, H)
-    ctx.globalCompositeOperation = 'lighter'
-    ctx.globalAlpha = 0.32 * tide
-    for (let i = 0; i < 5; i++) {
-      const r = 170 + 50 * Math.sin(anim * 0.2 + i)
-      const x = W * (0.5 + 0.45 * Math.sin(anim * 0.11 + i * 1.9))
-      const y = H * (0.45 + 0.4 * Math.cos(anim * 0.09 + i * 2.7))
-      ctx.drawImage(bloom, x - r, y - r, 2 * r, 2 * r)
+  // Blend each fish between the last two snapshots so it glides rather than steps.
+  const swimmers: Swimmer[] = s.organisms.map((o) => {
+    const p = from.get(o.id) ?? o
+    const ux = p.ux + (o.ux - p.ux) * blend
+    const uy = p.uy + (o.uy - p.uy) * blend
+    const uz = p.uz + (o.uz - p.uz) * blend
+    const len = Math.hypot(ux, uy, uz) || 1
+    const age = born.has(o.id) ? (now - born.get(o.id)!) / 700 : 1
+    return {
+      id: o.id, lineage: o.lineage, genome: o.genome,
+      x: p.x + (o.x - p.x) * blend, y: p.y + (o.y - p.y) * blend, z: p.z + (o.z - p.z) * blend,
+      ux: ux / len, uy: uy / len, uz: uz / len,
+      energy: o.energy / maxEnergy(o.genome),
+      grown: Math.min(1, age),
     }
-  }
-
-  ctx.globalCompositeOperation = 'source-over'
-  ctx.fillStyle = '#9fd0d8'
-  for (let i = 0; i < 70; i++) { // marine snow, drifting at different depths
-    const depth = 0.3 + ((i * 37) % 10) / 14
-    ctx.globalAlpha = 0.05 + 0.14 * depth
-    ctx.fillRect((i * 97.3 + anim * 6 * depth) % W, (i * 53.7 + anim * 10 * depth) % H, 1 + depth, 1 + depth)
-  }
-
-  ctx.globalCompositeOperation = 'lighter'
-  ctx.fillStyle = '#eafff9'
-  for (const f of s.food) { // food: twinkling plankton
-    ctx.globalAlpha = 0.6 + 0.4 * Math.sin(anim * 3 + f.x * 0.37 + f.y * 0.71)
-    ctx.drawImage(plankton, f.x - 7, f.y - 7, 14, 14)
-    ctx.fillRect(f.x - 0.8, f.y - 0.8, 1.6, 1.6)
-  }
-
-  // Blend each fish between the last two snapshots, then lay down wakes, glows, and bodies.
-  ctx.lineCap = 'round'
-  const nextWakes = new Map<number, number[]>()
-  const fish = s.organisms.map((o) => {
-    const p = from.get(o.id)
-    let x = o.x, y = o.y, heading = o.heading
-    if (p) {
-      let turn = o.heading - p.heading
-      turn -= TAU * Math.round(turn / TAU)
-      x = p.x + (o.x - p.x) * blend
-      y = p.y + (o.y - p.y) * blend
-      heading = p.heading + turn * blend
-    }
-    const len = 5 + 9 * o.genome.bodyLength
-    const colour = hue(o.lineage) + (o.genome.hue - 0.5) * 24 // lineage colour plus the fish's own variation
-    const energy = o.energy / maxEnergy(o.genome)
-    const wake = wakes.get(o.id) ?? []
-    wake.unshift(x - Math.cos(heading) * len, y - Math.sin(heading) * len)
-    if (wake.length > WAKE) wake.length = WAKE
-    nextWakes.set(o.id, wake)
-    ctx.strokeStyle = `hsl(${colour} 90% 60%)`
-    for (let j = 0; j + 3 < wake.length; j += 2) { // a wake that thins and fades behind the tail
-      const k = 1 - j / WAKE
-      ctx.globalAlpha = 0.45 * k * k * (0.4 + 0.6 * energy)
-      ctx.lineWidth = (1 + len * 0.16) * k
-      ctx.beginPath()
-      ctx.moveTo(wake[j], wake[j + 1])
-      ctx.lineTo(wake[j + 2], wake[j + 3])
-      ctx.stroke()
-    }
-    return { o, x, y, heading, len, colour, energy }
   })
-  wakes = nextWakes
-  for (const f of fish) { // dimmer = hungrier
-    const r = f.len * 2.4
-    ctx.globalAlpha = 0.25 + 0.6 * f.energy
-    ctx.drawImage(glows[f.o.lineage % glows.length], f.x - r, f.y - r, 2 * r, 2 * r)
+  const living = swimmers.length
+  fading = fading.filter((f) => now - f.at < 900)
+  for (const { o, at } of fading) { // the dead lose their colour, shrink, and sink
+    const k = (now - at) / 900
+    swimmers.push({ ...o, y: o.y - 45 * k, energy: 0, grown: 1 - k })
   }
-  ctx.globalCompositeOperation = 'source-over'
-  for (const { o, x, y, heading, len, colour, energy } of fish) {
-    const g = o.genome
-    const wide = len * 0.42
-    const fin = len * (0.5 + 0.6 * g.finSize)
-    const beat = Math.sin(anim * (5 + 7 * g.speed) + o.id) // tail beat, faster for faster swimmers
-    ctx.save()
-    ctx.translate(x, y)
-    ctx.rotate(heading + beat * 0.05)
-    if (Math.cos(heading) < 0) ctx.scale(1, -1) // keep the belly down when swimming left
-    ctx.globalAlpha = 0.65 + 0.35 * energy
-    ctx.fillStyle = `hsl(${colour} 90% ${46 + 16 * energy}%)`
-    ctx.save()
-    ctx.translate(-len * 0.72, 0)
-    ctx.rotate(beat * 0.5)
-    ctx.beginPath()
-    ctx.moveTo(len * 0.1, 0)
-    ctx.quadraticCurveTo(-fin * 0.5, -fin * 0.1, -fin, -fin * 0.62)
-    ctx.quadraticCurveTo(-fin * 0.62, 0, -fin, fin * 0.62)
-    ctx.quadraticCurveTo(-fin * 0.5, fin * 0.1, len * 0.1, 0)
-    ctx.fill()
-    ctx.restore()
-    ctx.beginPath()
-    ctx.moveTo(len, 0)
-    ctx.bezierCurveTo(len * 0.5, -wide * 1.25, -len * 0.4, -wide, -len * 0.78, 0)
-    ctx.bezierCurveTo(-len * 0.4, wide, len * 0.5, wide * 1.25, len, 0)
-    ctx.fill()
-    ctx.globalAlpha = 0.3 + 0.6 * energy // the light organ along the flank
-    ctx.fillStyle = `hsl(${colour} 100% 86%)`
-    ctx.beginPath()
-    ctx.ellipse(len * 0.1, 0, len * 0.5, wide * 0.28, 0, 0, TAU)
-    ctx.fill()
-    ctx.globalAlpha = 1
-    ctx.fillStyle = '#01070f'
-    ctx.beginPath()
-    ctx.arc(len * 0.6, -wide * 0.22, Math.max(0.9, len * 0.09), 0, TAU)
-    ctx.fill()
-    ctx.restore()
-  }
-
-  // A birth flares in the lineage's colour; a death dims and sinks.
-  ctx.globalCompositeOperation = 'lighter'
-  effects = effects.filter((e) => now - e.at < 900)
-  for (const e of effects) {
-    const k = (now - e.at) / 900
-    const r = e.birth ? 10 + 30 * k : 12 - 6 * k
-    ctx.globalAlpha = (e.birth ? 0.9 : 0.45) * (1 - k)
-    ctx.drawImage(glows[e.lineage % glows.length], e.x - r, e.y + (e.birth ? 0 : 22 * k) - r, 2 * r, 2 * r)
-  }
-  ctx.globalCompositeOperation = 'source-over'
+  tank.draw(swimmers, s.food, murk, anim)
 
   // Recent pull requests: an arc between the eldest fish of the two lineages, or a ring if only one branch is in the snapshot.
+  ctx.clearRect(0, 0, W, H)
   ctx.font = '500 10px "Martian Mono Variable", ui-monospace, monospace'
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
@@ -402,49 +258,41 @@ function frame(now: number) {
     if (e.kind !== 'PR_OPENED' && e.kind !== 'PR_MERGED') continue
     const [head, base] = e.branches.map((b) => {
       const lineage = data.branches.indexOf(b)
-      return lineage < 0 ? undefined : fish.find((f) => f.o.lineage === lineage)
+      for (let j = 0; lineage >= 0 && j < living; j++) {
+        if (swimmers[j].lineage === lineage) return tank.project(swimmers[j].x, swimmers[j].y, swimmers[j].z)
+      }
     })
     const anchor = base ?? head
     if (!anchor) continue
     const age = (s.tick - e.tick) / LINK_TICKS
     const merged = e.kind === 'PR_MERGED'
-    const tint = merged ? '#ffffff' : '#b79bff'
-    let lx = anchor.x
-    let ly = anchor.y - 34
+    let [lx, ly] = anchor
+    ly -= 34
     ctx.save()
-    ctx.globalAlpha = 1 - age
-    ctx.strokeStyle = ctx.shadowColor = tint
-    ctx.shadowBlur = merged ? 16 : 8
-    ctx.lineWidth = merged ? 2 : 1.2
-    ctx.setLineDash(merged ? [] : [3, 7])
+    ctx.globalAlpha = Math.min(1, 3 * (1 - age))
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)'
+    ctx.lineWidth = merged ? 2 : 1.25
+    ctx.setLineDash(merged ? [] : [4, 6])
     ctx.beginPath()
     if (head && base) {
-      const mx = (head.x + base.x) / 2
-      const my = (head.y + base.y) / 2 - Math.max(40, 0.3 * Math.hypot(head.x - base.x, head.y - base.y))
-      const along = (k: number) => [ // point on the arc, k from head (0) to base (1)
-        (1 - k) * (1 - k) * head.x + 2 * k * (1 - k) * mx + k * k * base.x,
-        (1 - k) * (1 - k) * head.y + 2 * k * (1 - k) * my + k * k * base.y,
-      ]
-      ctx.moveTo(head.x, head.y)
-      ctx.quadraticCurveTo(mx, my, base.x, base.y)
-      ctx.stroke()
-      const [px, py] = along((anim * 0.5) % 1) // a spark travelling toward the base branch
-      ctx.drawImage(plankton, px - 9, py - 9, 18, 18)
-      ;[lx, ly] = along(0.5)
-      ly -= 16
+      const mx = (head[0] + base[0]) / 2
+      const my = (head[1] + base[1]) / 2 - Math.max(40, 0.3 * Math.hypot(head[0] - base[0], head[1] - base[1]))
+      ctx.moveTo(head[0], head[1])
+      ctx.quadraticCurveTo(mx, my, base[0], base[1])
+      lx = 0.25 * head[0] + 0.5 * mx + 0.25 * base[0] // the top of the arc
+      ly = 0.25 * head[1] + 0.5 * my + 0.25 * base[1] - 16
     } else {
-      ctx.arc(anchor.x, anchor.y, 18 + 46 * age, 0, TAU)
-      ctx.stroke()
+      ctx.arc(anchor[0], anchor[1], 18 + 46 * age, 0, TAU)
     }
+    ctx.stroke()
     ctx.setLineDash([])
-    ctx.shadowBlur = 0
     const label = `PR #${e.id} ${merged ? 'MERGED' : 'OPENED'}`
     const width = ctx.measureText(label).width + 16
-    ctx.fillStyle = 'rgba(1, 8, 16, 0.75)'
+    ctx.fillStyle = 'rgba(6, 22, 34, 0.8)'
     ctx.beginPath()
     ctx.roundRect(lx - width / 2, ly - 9, width, 18, 9)
     ctx.fill()
-    ctx.fillStyle = tint
+    ctx.fillStyle = '#fff'
     ctx.fillText(label, lx, ly + 0.5)
     ctx.restore()
   }

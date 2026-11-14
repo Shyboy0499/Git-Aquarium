@@ -6,7 +6,7 @@ Git Aquarium is a planned artificial-life simulator that turns GitHub developmen
 
 The goal is to make software history visible, explorable, and explainable through **artificial life, reproducible replay, and evidence-based interpretation**.
 
-> **Project status: planning / pre-implementation.** The application has not been implemented yet. The features, architecture, roadmap, and performance figures below describe the intended four-week course or competition MVP; they are not claims of working functionality or measured results.
+> **Project status: week 1 of 4 implemented.** The artificial-life foundation runs today: a seeded, deterministic simulation in a Web Worker with foraging, energy, reproduction, inheritance, mutation, and death, drawn on a 2D canvas. GitHub import, Git-driven replay, inspection, and the AI Ecologist are not implemented yet; the sections describing them, and all performance figures, are intentions for the four-week course or competition MVP rather than working functionality or measured results.
 
 ## The idea
 
@@ -132,11 +132,13 @@ flowchart TD
 | Workspace | pnpm workspace |
 | Testing | Vitest and Playwright |
 
+**Current implementation (week 1):** a single Vite + TypeScript package. The simulation (`src/sim.ts`) has no dependencies and runs in a Web Worker (`src/worker.ts`); rendering (`src/main.ts`) uses the native Canvas 2D API. React, PixiJS, the workspace split, Fastify, Zod, and IndexedDB will be introduced when a later milestone needs them.
+
 The simulation package will not depend on React, PixiJS, network access, or storage APIs. Rendering will consume state without changing it. AI responses will explain recorded state without controlling organisms.
 
 ### Proposed repository layout
 
-The following structure is planned and has not been scaffolded yet:
+The following structure is the planned end state and has not been scaffolded yet; today all code lives in `src/`:
 
 ```text
 apps/
@@ -215,18 +217,18 @@ The initial performance target for a specified desktop test machine is an averag
 
 ## Getting started
 
-The repository is currently at the planning stage, so there is no runnable application or supported installation command yet.
-
-You can clone the repository to follow development:
+Requires Node.js 22+ and pnpm.
 
 ```bash
 git clone https://github.com/jingchangzhao-gif/Git-Aquarium.git
 cd Git-Aquarium
+pnpm install
+pnpm dev     # open the printed local URL
+pnpm test    # determinism, snapshot-resume, and bounds checks
+pnpm build   # type-check and production build
 ```
 
-Setup instructions and verified development, build, and test commands will be added when the application scaffold is available.
-
-The intended first implementation milestone is a seeded scene of 64 organisms that can move, forage, consume energy, and reproduce the same state after reset.
+The first milestone is in place: a seeded scene of 64 organisms in four placeholder lineages that move, forage, spend energy, reproduce, mutate, and die, and that returns to the same state when reset with the same seed. No network access is needed. Lineages are placeholders until branch import arrives in week 2.
 
 ## Access and data handling
 

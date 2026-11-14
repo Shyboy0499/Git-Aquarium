@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Git Aquarium</title>
+    <style>
+      body { margin: 0; padding: 16px; background: #021521; color: #d7ecf5; font: 14px/1.5 system-ui, sans-serif; }
+      h1 { margin: 0 0 12px; font-size: 20px; }
+      canvas { display: block; max-width: 100%; border-radius: 6px; }
+      form { display: flex; gap: 8px; align-items: center; margin: 12px 0; }
+      input { width: 8em; }
+    </style>
+  </head>
+  <body>
+    <h1>Git Aquarium</h1>
+    <canvas role="img" aria-label="Aquarium: simulated organisms foraging for food"></canvas>
+    <form>
+      <label>Seed <input id="seed" type="number" step="1" value="1" required /></label>
+      <button>Reset</button>
+      <button type="button" id="pause">Pause</button>
+    </form>
+    <p id="hud"></p>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

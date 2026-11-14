@@ -77,7 +77,19 @@ export const P = {
   baseCost: 0.03,
   moveCost: 0.008,
   senseCost: 0.0001,
-  wander: 0.6, // max heading change per tick (radians) when no food is in sight
+  // Swimming: fish turn gradually, cruise level, and school with their own lineage.
+  turnRate: 0.12, // max heading change per tick (radians) while cruising
+  chaseTurnRate: 0.3, // ...and while heading for food
+  minTurnSpeed: 0.35, // fraction of speed kept through a sharp turn
+  wander: 0.25, // sideways meander while cruising
+  level: 0.6, // below 1, cruising fish favour horizontal travel
+  schoolRange: 90,
+  cohesion: 0.4, // pull toward nearby lineage-mates
+  alignment: 0.8, // tendency to match their direction
+  personalSpace: 18,
+  separation: 1.5, // push away from anyone closer than personalSpace
+  wallMargin: 50,
+  wallPush: 1.2, // steer away from the glass before reaching it
   maturity: 0.15, // fraction of lifespan before breeding
   breedEnergy: 0.6, // fraction of max energy needed to breed
   breedCost: 0.25, // fraction of max energy each parent gives the child
@@ -148,7 +160,11 @@ export function step(s: State, events: readonly GitEvent[] = []): void {
   if (rand(s) < P.foodPerTick) addFood(s, 1)
 
   // 3-5. Perception, movement, eating, energy, age.
-  for (const o of s.organisms) {
+  // Directions as they were when the tick began, so schooling does not depend on update order.
+  const hx = s.organisms.map((o) => Math.cos(o.heading))
+  const hy = s.organisms.map((o) => Math.sin(o.heading))
+  for (let k = 0; k < s.organisms.length; k++) {
+    const o = s.organisms[k]
     const g = o.genome
     const sight = sightRange(g)
     const speed = swimSpeed(g)
@@ -161,28 +177,76 @@ export function step(s: State, events: readonly GitEvent[] = []): void {
       const d = dx * dx + dy * dy
       if (d < best) { best = d; target = i }
     }
-    let move = speed
-    if (target < 0) {
-      o.heading += (rand(s) - 0.5) * 2 * P.wander
-    } else {
-      const gap = Math.sqrt(best)
-      o.heading = Math.atan2(s.food[target].y - o.y, s.food[target].x - o.x)
-      move = Math.min(speed, gap)
-      if (gap - move <= eatRange(g)) {
-        o.energy = Math.min(maxEnergy(g), o.energy + P.foodEnergy * (0.6 + 0.8 * g.metabolism))
-        s.food[target] = s.food[s.food.length - 1]
-        s.food.pop()
+
+    // Where it wants to go: toward food if it sees any, otherwise straight ahead.
+    const chasing = target >= 0
+    let dx = hx[k]
+    let dy = hy[k]
+    if (chasing) {
+      const gap = Math.sqrt(best) || 1
+      dx = (s.food[target].x - o.x) / gap
+      dy = (s.food[target].y - o.y) / gap
+    }
+    // ponytail: O(organisms^2) neighbour scan, 40k checks at the cap; share a grid with the food scan if the cap grows
+    let cx = 0, cy = 0, ax = 0, ay = 0, mates = 0
+    for (let j = 0; j < s.organisms.length; j++) {
+      if (j === k) continue
+      const m = s.organisms[j]
+      const mx = m.x - o.x
+      const my = m.y - o.y
+      const d2 = mx * mx + my * my
+      if (d2 > 0 && d2 < P.personalSpace * P.personalSpace) {
+        const d = Math.sqrt(d2)
+        const push = (P.separation * (1 - d / P.personalSpace)) / d
+        dx -= mx * push
+        dy -= my * push
+      }
+      if (!chasing && m.lineage === o.lineage && d2 < P.schoolRange * P.schoolRange) {
+        cx += mx; cy += my; ax += hx[j]; ay += hy[j]; mates++
       }
     }
+    if (!chasing) {
+      if (mates) {
+        dx += (P.cohesion * cx) / mates / P.schoolRange + (P.alignment * ax) / mates
+        dy += (P.cohesion * cy) / mates / P.schoolRange + (P.alignment * ay) / mates
+      }
+      const drift = (rand(s) - 0.5) * 2 * P.wander
+      dx -= hy[k] * drift
+      dy += hx[k] * drift
+      dy *= P.level
+      if (o.x < P.wallMargin) dx += P.wallPush * (1 - o.x / P.wallMargin)
+      if (o.x > P.width - P.wallMargin) dx -= P.wallPush * (1 - (P.width - o.x) / P.wallMargin)
+      if (o.y < P.wallMargin) dy += P.wallPush * (1 - o.y / P.wallMargin)
+      if (o.y > P.height - P.wallMargin) dy -= P.wallPush * (1 - (P.height - o.y) / P.wallMargin)
+    }
+
+    // Turn gradually toward that direction, slowing through sharp turns.
+    let turn = Math.atan2(dy, dx) - o.heading
+    turn -= 2 * Math.PI * Math.round(turn / (2 * Math.PI))
+    const limit = chasing ? P.chaseTurnRate : P.turnRate
+    o.heading += Math.max(-limit, Math.min(limit, turn))
+    const move = speed * Math.max(P.minTurnSpeed, Math.cos(turn))
     o.x += Math.cos(o.heading) * move
     o.y += Math.sin(o.heading) * move
-    if (o.x < 0 || o.x > P.width) { // bounce off the glass
+    if (o.x < 0 || o.x > P.width) { // the glass itself, if steering was not enough
       o.x = Math.min(P.width, Math.max(0, o.x))
       o.heading = Math.PI - o.heading
     }
     if (o.y < 0 || o.y > P.height) {
       o.y = Math.min(P.height, Math.max(0, o.y))
       o.heading = -o.heading
+    }
+    o.heading -= 2 * Math.PI * Math.round(o.heading / (2 * Math.PI)) // keep within -pi..pi
+
+    if (chasing) {
+      const fx = s.food[target].x - o.x
+      const fy = s.food[target].y - o.y
+      const reach = eatRange(g)
+      if (fx * fx + fy * fy <= reach * reach) {
+        o.energy = Math.min(maxEnergy(g), o.energy + P.foodEnergy * (0.6 + 0.8 * g.metabolism))
+        s.food[target] = s.food[s.food.length - 1]
+        s.food.pop()
+      }
     }
     o.energy -=
       P.baseCost * (0.5 + g.metabolism) * (0.5 + g.bodyLength) +

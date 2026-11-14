@@ -3,67 +3,83 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
     <title>Git Aquarium</title>
-    <style>
-      body { margin: 0; padding: 16px; background: #021521; color: #d7ecf5; font: 14px/1.5 system-ui, sans-serif; }
-      h1 { margin: 0 0 12px; font-size: 20px; }
-      h2 { margin: 0 0 8px; font-size: 14px; }
-      a { color: #7fd3ff; }
-      form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 12px 0; }
-      p, ul, ol { margin: 8px 0; }
-      #repo { width: 22em; max-width: 100%; }
-      #seed { width: 6em; }
-      #error { color: #ffb4a2; }
-      #notices { padding-left: 18px; color: #9fb9c6; font-size: 12px; }
-      .stage { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }
-      .tank { flex: 1 1 480px; max-width: 800px; min-width: 0; }
-      canvas { display: block; width: 100%; border-radius: 6px; }
-      progress { width: 100%; height: 8px; margin-top: 8px; accent-color: #7fd3ff; }
-      aside { flex: 1 1 260px; max-width: 380px; }
-      #legend { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 0; list-style: none; }
-      #legend i { display: inline-block; width: 10px; height: 10px; margin-right: 6px; border-radius: 50%; }
-      #log { padding: 0; list-style: none; }
-      #log li { margin-bottom: 8px; padding-left: 8px; border-left: 2px solid #2c5f7a; }
-      #log li > * { display: block; }
-      #log small { color: #9fb9c6; }
-    </style>
   </head>
   <body>
-    <h1>Git Aquarium</h1>
-    <form id="source">
-      <label>Public GitHub repository <input id="repo" placeholder="owner/repo or https://github.com/owner/repo" required /></label>
-      <button id="import">Import</button>
-      <button type="button" id="demo">Load demo</button>
-    </form>
-    <p id="status" role="status"></p>
-    <p id="error" role="alert"></p>
-    <ul id="notices"></ul>
-    <div class="stage">
-      <div class="tank">
-        <canvas role="img" aria-label="Aquarium: simulated organisms foraging for food"></canvas>
-        <progress id="timeline" value="0" aria-label="Replay progress"></progress>
-        <p id="date"></p>
-        <form id="controls">
-          <label>Seed <input id="seed" type="number" step="1" value="1" required /></label>
-          <button>Reset</button>
-          <button type="button" id="pause">Pause</button>
-          <label>Speed
-            <select id="speed">
-              <option value="1">1x</option>
-              <option value="2">2x</option>
-              <option value="4">4x</option>
-            </select>
-          </label>
-        </form>
-        <p id="hud"></p>
+    <header class="masthead">
+      <div>
+        <h1>Git <em>Aquarium</em></h1>
+        <p class="tagline">Your repository is an ecosystem. Your code is alive.</p>
       </div>
-      <aside>
-        <h2>Lineages (observed branches)</h2>
-        <ul id="legend"></ul>
-        <h2>Repository events and the rules they triggered</h2>
-        <ol id="log"></ol>
+      <form id="source">
+        <label for="repo">Public GitHub repository</label>
+        <div class="field">
+          <input id="repo" placeholder="owner/repo or github.com URL" autocomplete="off" spellcheck="false" required />
+          <button id="import">Import</button>
+        </div>
+        <button type="button" id="demo" class="ghost">Load demo</button>
+      </form>
+    </header>
+    <p id="error" role="alert"></p>
+
+    <main class="deck">
+      <div class="column">
+        <section class="tank" aria-label="Aquarium">
+          <canvas role="img" aria-label="Aquarium: simulated organisms foraging for food"></canvas>
+          <p id="date" class="caption"></p>
+          <p id="alarm" class="caption" hidden></p>
+          <div class="transport">
+            <div id="timeline" role="progressbar" aria-label="Replay progress" aria-valuemin="0" aria-valuemax="100">
+              <div id="fill"></div>
+              <div id="marks"></div>
+            </div>
+            <form id="controls">
+              <button type="button" id="pause" class="primary">Pause</button>
+              <fieldset id="speed">
+                <legend>Speed</legend>
+                <label><input type="radio" name="speed" value="1" checked /><span>1x</span></label>
+                <label><input type="radio" name="speed" value="2" /><span>2x</span></label>
+                <label><input type="radio" name="speed" value="4" /><span>4x</span></label>
+              </fieldset>
+              <label class="seed">Seed <input id="seed" type="number" step="1" value="1" required /></label>
+              <button class="ghost">Reset</button>
+            </form>
+          </div>
+        </section>
+
+        <section class="stats" aria-labelledby="stats-title">
+          <h2 id="stats-title">Simulated measurements</h2>
+          <dl>
+            <div><dt>Population</dt><dd id="s-pop">0</dd></div>
+            <div><dt>Mean energy</dt><dd id="s-energy">0</dd></div>
+            <div><dt>Births</dt><dd id="s-births">0</dd></div>
+            <div><dt>Deaths</dt><dd id="s-deaths">0</dd></div>
+            <div><dt>Mutations</dt><dd id="s-mutations">0</dd></div>
+            <div><dt>Water stress</dt><dd id="s-stress">0%</dd></div>
+          </dl>
+        </section>
+      </div>
+
+      <aside class="panel">
+        <section>
+          <h2>Dataset</h2>
+          <div id="dataset"></div>
+          <details id="notices">
+            <summary></summary>
+            <ul></ul>
+          </details>
+        </section>
+        <section>
+          <h2>Lineages <span>one per observed branch</span></h2>
+          <ul id="legend"></ul>
+        </section>
+        <section>
+          <h2>Repository events <span>and their rules</span></h2>
+          <ol id="log"></ol>
+        </section>
       </aside>
-    </div>
+    </main>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

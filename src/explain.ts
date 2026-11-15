@@ -116,7 +116,10 @@ export function explain(question: string, c: Context): Answer {
   } else if (change < 0) {
     interpretation = `Most deaths were old age (${aged} of ${dead}) and births did not replace them, which is generational turnover rather than an effect of a repository event.`
   } else {
-    interpretation = `Growth followed the food supply: ${plural(commits, 'commit')} and ${plural(of('PR_MERGED').length, 'merge')} added food, and births outnumbered deaths ${born} to ${dead}.` +
+    const merges = of('PR_MERGED').length
+    interpretation = (commits + merges
+      ? `Growth followed the food supply: ${plural(commits, 'commit')} and ${plural(merges, 'merge')} added food, and births outnumbered deaths ${born} to ${dead}.`
+      : `No commit or merge was replayed in this period, so the growth came from food already in the tank and the baseline supply: births outnumbered deaths ${born} to ${dead}.`) +
       (then.stress > now.stress ? ' The water was also clearing after CI passed, which lowered every organism\'s energy cost.' : '')
   }
   return { facts, rules, interpretation, uncertainty: caveats }

@@ -32,6 +32,7 @@ test('the rule-based explanation ties the collapse to the CI failures it can cit
   const named = explain(`Why did ${demo.branches[1]} decline?`, c) // naming a branch narrows the answer to its lineage
   expect(named.facts[0].text).toContain(`Lineage ${demo.branches[1]}`)
   expect(explain('anything', { ...c, samples: [] }).facts).toEqual([]) // nothing recorded yet: no invented facts
+  expect(explain('Why?', replay(60)).interpretation).toContain('baseline supply') // before any event, growth is not credited to commits
 })
 
 test('a model answer is rejected when it is malformed or cites a record that does not exist', () => {

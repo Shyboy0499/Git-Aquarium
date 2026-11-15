@@ -63,8 +63,47 @@ function paint(width: number, height: number, draw: (c: CanvasRenderingContext2D
   return texture
 }
 
-// A fish about two units long, nose toward +X, built from a squashed sphere, three fins, and two eyes.
-function fishGeometry() {
+// One body plan per lineage, so branches differ by shape as well as colour. A fish is about two units long,
+// nose toward +X. With more than four lineages the plans repeat in new colours.
+const SPECIES = [
+  { h: 0.4, w: 0.19, tail: 0.73, spread: 0.5, fork: 0.34, dorsal: 0.35, anal: 0.3, sweep: 0 }, // reef fish: the all-rounder
+  { h: 0.25, w: 0.16, tail: 0.6, spread: 0.42, fork: 0.6, dorsal: 0.16, anal: 0.12, sweep: 0.1 }, // dart: slim, forked tail, low fins
+  { h: 0.6, w: 0.13, tail: 0.5, spread: 0.36, fork: 0.12, dorsal: 0.45, anal: 0.42, sweep: 0.35 }, // disc: tall and flat, trailing fins
+  { h: 0.5, w: 0.3, tail: 1, spread: 0.72, fork: 0.22, dorsal: 0.3, anal: 0.2, sweep: 0.05 }, // fantail: round, flowing tail
+]
+type Species = (typeof SPECIES)[number]
+type Outline = [number, number][]
+
+// The side view of a body plan: the body's upper edge and the three fin outlines.
+function plan(s: Species) {
+  const top = (x: number) => s.h * (0.78 + 0.3 * x) * Math.sqrt(1 - x * x) // fuller toward the head
+  const end = -0.82 - s.tail
+  const fins: Outline[] = [
+    [[-0.82, 0.05], [end, s.spread], [end + s.tail * s.fork, 0], [end, -s.spread], [-0.82, -0.05]], // tail
+    [[0.35, top(0.35)], [-0.05 - s.sweep, top(-0.05) + s.dorsal], [-0.55 - 0.6 * s.sweep, top(-0.55) + 0.6 * s.dorsal], [-0.5, top(-0.5)], [0.3, 0.84 * top(0.3)]], // dorsal
+    [[-0.2, -top(-0.2)], [-0.5 - s.sweep, -top(-0.5) - s.anal], [-0.7, -top(-0.7)]], // anal
+  ]
+  return { top, fins }
+}
+
+// The same plan as a flat picture, for the legend.
+export function silhouette(lineage: number) {
+  const { top, fins } = plan(SPECIES[lineage % SPECIES.length])
+  const xs = Array.from({ length: 21 }, (_, i) => 1 - i / 10)
+  const body: Outline = [...xs.map((x): [number, number] => [x, top(x)]), ...xs.reverse().map((x): [number, number] => [x, -top(x)])]
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+  svg.setAttribute('viewBox', '-1.9 -1 3 2')
+  svg.setAttribute('aria-hidden', 'true')
+  for (const part of [body, ...fins]) {
+    const polygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon')
+    polygon.setAttribute('points', part.map(([x, y]) => `${x.toFixed(2)},${(-y).toFixed(2)}`).join(' '))
+    svg.append(polygon)
+  }
+  return svg
+}
+
+// The plan in 3D: a squashed sphere, three flat fins, and two eyes.
+function fishGeometry(s: Species) {
   const shaded = (g: THREE.BufferGeometry, shade: (y: number) => number) => {
     const p = g.attributes.position
     const colors = new Float32Array(p.count * 3)
@@ -76,20 +115,18 @@ function fishGeometry() {
   const n = body.attributes.normal
   const v = new THREE.Vector3()
   for (let i = 0; i < p.count; i++) {
-    const bulk = 0.78 + 0.3 * p.getX(i) // fuller toward the head
-    p.setY(i, p.getY(i) * 0.4 * bulk)
-    p.setZ(i, p.getZ(i) * 0.19 * bulk)
-    v.set(n.getX(i), n.getY(i) / 0.4, n.getZ(i) / 0.19).normalize()
+    const bulk = 0.78 + 0.3 * p.getX(i) // matches `top` in the plan
+    p.setY(i, p.getY(i) * s.h * bulk)
+    p.setZ(i, p.getZ(i) * s.w * bulk)
+    v.set(n.getX(i), n.getY(i) / s.h, n.getZ(i) / s.w).normalize()
     n.setXYZ(i, v.x, v.y, v.z)
   }
-  const fin = (...points: [number, number][]) =>
+  const fin = (points: Outline) =>
     shaded(new THREE.ShapeGeometry(new THREE.Shape(points.map(([x, y]) => new THREE.Vector2(x, y)))), () => 0.72)
-  const eye = (side: number) => shaded(new THREE.SphereGeometry(0.06, 10, 8).translate(0.66, 0.09, 0.115 * side), () => 0.02)
+  const eye = (side: number) => shaded(new THREE.SphereGeometry(0.06, 10, 8).translate(0.66, 0.225 * s.h, (0.7 * s.w - 0.018) * side), () => 0.02)
   return mergeGeometries([
-    shaded(body, (y) => 1 - 0.42 * THREE.MathUtils.smoothstep(y, -0.05, 0.3)), // darker back, lighter belly
-    fin([-0.82, 0.05], [-1.55, 0.5], [-1.3, 0], [-1.55, -0.5], [-0.82, -0.05]), // tail
-    fin([0.35, 0.34], [-0.05, 0.66], [-0.55, 0.42], [-0.5, 0.24], [0.3, 0.28]), // dorsal
-    fin([-0.2, -0.28], [-0.5, -0.52], [-0.7, -0.18]), // anal
+    shaded(body, (y) => 1 - 0.42 * THREE.MathUtils.smoothstep(y, -0.12 * s.h, 0.75 * s.h)), // darker back, lighter belly
+    ...plan(s).fins.map(fin),
     eye(1), eye(-1),
   ])
 }
@@ -271,28 +308,29 @@ export function createTank(canvas: HTMLCanvasElement) {
   )
   scene.add(snow)
 
-  // Fish and food are instanced: one draw call each, however many there are.
+  // Fish and food are instanced: one draw call per species and one for food, however many there are.
   const limit = P.maxPopulation + 60 // living fish plus any still fading out
-  const swim = new THREE.InstancedBufferAttribute(new Float32Array(limit * 3), 3) // phase, tail-beat rate, fin size
-  const fish = new THREE.InstancedMesh(
-    fishGeometry().setAttribute('aSwim', swim),
-    lit(new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide, roughness: 0.42, metalness: 0.2 }),
-      'attribute vec3 aSwim;', `
-      float reach = smoothstep(0.5, -1.4, position.x); // the wave grows toward the tail
-      transformed.z += sin(aSwim.x + uTime * aSwim.y + position.x * 2.6) * 0.34 * reach * reach;
-      if (position.x < -0.8) transformed.y *= mix(0.75, 1.45, aSwim.z);`),
-    limit,
-  )
-  fish.setColorAt(0, tint.set('#fff'))
-  fish.castShadow = true
-  fish.frustumCulled = false
+  const scales = lit(new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide, roughness: 0.42, metalness: 0.2 }),
+    'attribute vec3 aSwim;', `
+    float reach = smoothstep(0.5, -1.4, position.x); // the wave grows toward the tail
+    transformed.z += sin(aSwim.x + uTime * aSwim.y + position.x * 2.6) * 0.34 * reach * reach;
+    if (position.x < -0.8) transformed.y *= mix(0.75, 1.45, aSwim.z);`)
+  const shoals = SPECIES.map((species) => {
+    const swim = new THREE.InstancedBufferAttribute(new Float32Array(limit * 3), 3) // phase, tail-beat rate, fin size
+    const mesh = new THREE.InstancedMesh(fishGeometry(species).setAttribute('aSwim', swim), scales, limit)
+    mesh.setColorAt(0, tint.set('#fff'))
+    mesh.castShadow = true
+    mesh.frustumCulled = false
+    scene.add(mesh)
+    return { mesh, swim }
+  })
   const pellets = new THREE.InstancedMesh(
     new THREE.SphereGeometry(0.032, 8, 6),
     new THREE.MeshStandardMaterial({ color: '#e0a646', emissive: '#7a5210', roughness: 0.8 }),
     P.maxFood,
   )
   pellets.frustumCulled = false
-  scene.add(fish, pellets)
+  scene.add(pellets)
 
   new ResizeObserver(() => renderer.setSize(canvas.clientWidth, canvas.clientHeight, false)).observe(canvas)
   const pointer = new THREE.Vector2()
@@ -316,24 +354,30 @@ export function createTank(canvas: HTMLCanvasElement) {
       hemisphere.intensity = THREE.MathUtils.lerp(1, 0.75, stress)
       shafts.forEach((mesh, i) => (mesh.material.opacity = (0.17 + 0.07 * Math.sin(time * 0.4 + i * 2)) * (1 - 0.85 * stress)))
 
-      const count = Math.min(swimmers.length, limit)
-      for (let i = 0; i < count; i++) {
-        const s = swimmers[i]
+      for (const { mesh } of shoals) mesh.count = 0
+      for (const s of swimmers) {
+        const { mesh, swim } = shoals[s.lineage % shoals.length]
+        const i = mesh.count
+        if (i >= limit) continue
+        mesh.count = i + 1
         place(dummy.position, s.x, s.y, s.z)
         const flat = Math.hypot(s.ux, s.uz) || 1e-6
         // Yaw toward where it is going; show only part of the climb or dive so fish never stand on end.
         dummy.rotation.set(0, Math.atan2(s.uz, s.ux), THREE.MathUtils.clamp(Math.atan2(s.uy, flat) * 0.6, -0.6, 0.6), 'YZX')
-        dummy.scale.setScalar((0.12 + 0.15 * s.genome.bodyLength) * s.grown)
+        const size = (0.12 + 0.15 * s.genome.bodyLength) * s.grown
+        const girth = size * (1.16 - 0.32 * s.genome.speed) // genes show: fast swimmers are slimmer
+        dummy.scale.set(size, girth, girth)
         dummy.updateMatrix()
-        fish.setMatrixAt(i, dummy.matrix)
+        mesh.setMatrixAt(i, dummy.matrix)
         tint.set(COLORS[s.lineage % COLORS.length]).offsetHSL((s.genome.hue - 0.5) * 0.07, 0, 0)
-        fish.setColorAt(i, tint.lerp(pale, 0.6 * (1 - s.energy) ** 2)) // paler = hungrier
+        mesh.setColorAt(i, tint.lerp(pale, 0.6 * (1 - s.energy) ** 2)) // paler = hungrier
         swim.setXYZ(i, s.id * 1.7, 5 + 7 * s.genome.speed, s.genome.finSize)
       }
-      fish.count = count
-      fish.instanceMatrix.needsUpdate = true
-      fish.instanceColor!.needsUpdate = true
-      swim.needsUpdate = true
+      for (const { mesh, swim } of shoals) {
+        mesh.instanceMatrix.needsUpdate = true
+        mesh.instanceColor!.needsUpdate = true
+        swim.needsUpdate = true
+      }
 
       dummy.rotation.set(0, 0, 0)
       dummy.scale.setScalar(1)

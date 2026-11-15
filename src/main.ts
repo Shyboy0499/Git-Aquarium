@@ -5,7 +5,7 @@ import './style.css'
 import { importRepo, type Dataset } from './dataset'
 import { demo } from './demo'
 import { P, RULES, maxEnergy, type EventKind, type Organism, type State } from './sim'
-import { COLORS, createTank, type Swimmer } from './tank'
+import { COLORS, createTank, silhouette, type Swimmer } from './tank'
 import type { Command } from './worker'
 
 const $ = <T extends HTMLElement>(selector: string) => document.querySelector<T>(selector)!
@@ -110,7 +110,7 @@ function use(d: Dataset) {
   $('#legend').replaceChildren(...d.branches.map((name, i) => {
     const li = el('li')
     li.style.setProperty('--c', COLORS[i % COLORS.length])
-    li.append(el('i'), el('span', name), el('b'), el('u'))
+    li.append(silhouette(i), el('span', name), el('b'), el('u'))
     return li
   }))
   const end = d.events[d.events.length - 1]?.tick ?? 1

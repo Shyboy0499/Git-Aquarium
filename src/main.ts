@@ -189,10 +189,11 @@ function report(s: State) {
     energy += o.energy
     counts[o.lineage]++
   }
-  const stress = Math.round((100 * s.penalty) / P.maxPenalty)
+  const levels = s.penalty.map((p) => p / P.maxPenalty) // each lineage's CI penalty, 0..1
+  const stress = Math.round((100 * levels.reduce((a, b) => a + b, 0)) / levels.length) // the water shows their average
   const second = (tick: number) => Math.floor(tick / P.ticksPerSecond)
   if (!samples.length || second(s.tick) > second(samples[samples.length - 1].tick)) {
-    samples.push({ tick: s.tick, pop: counts, energy: n ? energy / n : 0, stress: s.penalty / P.maxPenalty, tally: s.tally })
+    samples.push({ tick: s.tick, pop: counts, energy: n ? energy / n : 0, stress: levels, tally: s.tally })
     if (samples.length > 900) samples.shift() // ponytail: the chart and explanations keep the last 15 simulated minutes; thin old readings instead if longer runs matter
     chart()
   }
@@ -208,6 +209,7 @@ function report(s: State) {
   const legend = $('#legend').children
   counts.forEach((c, i) => {
     if (!legend[i]) return
+    legend[i].firstElementChild!.classList.toggle('stressed', levels[i] > 0)
     const row = legend[i].firstElementChild!.children
     row[2].textContent = String(c)
     ;(row[3] as HTMLElement).style.width = `${n ? (100 * c) / n : 0}%`
@@ -235,6 +237,7 @@ function report(s: State) {
     const li = el('li', '', e.kind + (i < fresh ? ' new' : ''))
     const rule = el('small')
     rule.append(el('b', RULES[e.kind].id), ` ${RULES[e.kind].effect}`)
+    if (e.kind !== 'PR_OPENED') rule.append(el('i', e.lineage < 0 ? ' · the whole tank' : ` · ${data.branches[e.lineage]}`))
     li.append(el('span', e.at.slice(0, 10), 'when'), el('span', KIND[e.kind], 'kind'), el('p', e.title), rule)
     if (e.url) {
       const a = el('a', 'GitHub source')
@@ -259,6 +262,7 @@ function filter(lineage: number | null) {
     rows[i].firstElementChild!.setAttribute('aria-pressed', String(i === lineage))
     $('#lines').children[i]?.classList.toggle('off', lineage !== null && i !== lineage)
   }
+  chart() // the shaded periods follow the filter
 }
 
 function select(o: Organism | null) {
@@ -339,11 +343,13 @@ function chart() {
   for (let i = 0; i < lines.length; i++) {
     lines[i].setAttribute('points', samples.map((s) => `${x(s.tick)},${(100 - (100 * s.pop[i]) / top).toFixed(1)}`).join(' '))
   }
-  let band = '' // one rectangle for each run of readings with a CI penalty
+  // One rectangle for each run of readings with a CI penalty: on any lineage, or on the filtered one.
+  const on = (s: Sample) => (focus === null ? s.stress.some((v) => v > 0) : s.stress[focus] > 0)
+  let band = ''
   for (let i = 0; i < samples.length; i++) {
-    if (samples[i].stress <= 0 || (i && samples[i - 1].stress > 0)) continue
+    if (!on(samples[i]) || (i && on(samples[i - 1]))) continue
     let j = i
-    while (j + 1 < samples.length && samples[j + 1].stress > 0) j++
+    while (j + 1 < samples.length && on(samples[j + 1])) j++
     band += `M${x(samples[i].tick)} 0H${x(samples[j].tick)}V100H${x(samples[i].tick)}Z`
   }
   $('#band').setAttribute('d', band)
@@ -368,7 +374,7 @@ plot.addEventListener('pointermove', (e) => {
   })
   rows.append(el('dt', 'All lineages', 'sum'), el('dd', String(s.pop.reduce((a, b) => a + b, 0))))
   const tip = $('#tip')
-  tip.replaceChildren(el('strong', `Tick ${s.tick}${date ? ` · ${date}` : ''}`), rows, el('small', s.stress > 0 ? `CI penalty active · water stress ${Math.round(100 * s.stress)}%` : 'No CI penalty'))
+  tip.replaceChildren(el('strong', `Tick ${s.tick}${date ? ` · ${date}` : ''}`), rows, el('small', s.stress.some((v) => v > 0) ? `CI penalty on ${data.branches.filter((_, i) => s.stress[i] > 0).join(', ')}` : 'No CI penalty'))
   tip.hidden = false
   tip.style.left = at < 0.6 ? `${100 * at}%` : ''
   tip.style.right = at < 0.6 ? '' : `${100 * (1 - at)}%`
@@ -466,7 +472,7 @@ function frame(now: number) {
   const s = cur
   if (running) anim += dt
   const blend = Math.min(1, (now - arrived) / TICK_MS)
-  murk += (s.penalty / P.maxPenalty - murk) * 0.03
+  murk += (s.penalty.reduce((a, b) => a + b, 0) / s.penalty.length / P.maxPenalty - murk) * 0.03
 
   // Blend each fish between the last two snapshots so it glides rather than steps.
   const swimmers: Swimmer[] = s.organisms.map((o) => {

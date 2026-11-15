@@ -5,6 +5,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import { P, type Genome } from './sim'
 
 export const COLORS = ['#f08a2c', '#3f7fe0', '#f2cf3a', '#58b9a5', '#d9534f', '#8a63c9', '#9fc94f', '#e9a3b8'] // one per lineage
+const SHARED_FOOD = '#efe9da' // baseline food, which any lineage may eat
 
 export interface Swimmer {
   id: number
@@ -327,9 +328,10 @@ export function createTank(canvas: HTMLCanvasElement) {
   })
   const pellets = new THREE.InstancedMesh(
     new THREE.SphereGeometry(0.032, 8, 6),
-    new THREE.MeshStandardMaterial({ color: '#e0a646', emissive: '#7a5210', roughness: 0.8 }),
+    new THREE.MeshBasicMaterial(), // unlit, so a pellet's colour always reads as its lineage's
     P.maxFood,
   )
+  pellets.setColorAt(0, tint.set('#fff'))
   pellets.frustumCulled = false
   scene.add(pellets)
 
@@ -345,7 +347,7 @@ export function createTank(canvas: HTMLCanvasElement) {
 
   return {
     // `time` is animation seconds (it stands still while paused); `stress` is 0..1 water stress.
-    draw(swimmers: Swimmer[], food: { x: number; y: number; z: number }[], stress: number, time: number) {
+    draw(swimmers: Swimmer[], food: { x: number; y: number; z: number; lineage: number }[], stress: number, time: number) {
       shared.uTime.value = time
       shared.uRipplePower.value = THREE.MathUtils.lerp(0.9, 0.12, stress)
       sky.material.uniforms.top.value.set(CLEAR.top).lerp(tint.set(MURKY.top), stress)
@@ -388,9 +390,12 @@ export function createTank(canvas: HTMLCanvasElement) {
         place(dummy.position, food[i].x, food[i].y, food[i].z)
         dummy.updateMatrix()
         pellets.setMatrixAt(i, dummy.matrix)
+        // Food for one lineage wears its colour; shared food is pale.
+        pellets.setColorAt(i, tint.set(food[i].lineage < 0 ? SHARED_FOOD : COLORS[food[i].lineage % COLORS.length]))
       }
       pellets.count = pieces
       pellets.instanceMatrix.needsUpdate = true
+      pellets.instanceColor!.needsUpdate = true
 
       for (let i = 0; i < bubbles.count; i++) { // three columns rising from the rocks
         const column = i % 3

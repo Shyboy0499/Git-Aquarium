@@ -29,14 +29,14 @@ export interface State {
   rng: number // mulberry32 state, kept in the state so a snapshot resumes exactly
   nextId: number
   organisms: Organism[]
-  food: { x: number; y: number; z: number }[]
+  food: { x: number; y: number; z: number; lineage: number }[] // lineage: who may eat it; -1 is anyone
   births: number
   deaths: number
   mutations: number
-  tally: { born: number; starved: number; aged: number }[] // the same births and deaths, per lineage and by cause
+  tally: { born: number; founded: number; starved: number; aged: number }[] // arrivals and deaths per lineage; `founded` counts re-founding only
   cursor: number // index of the next repository event to apply
-  failing: string[] // CI groups (workflow@branch) whose latest supported result is a failure
-  penalty: number // environmental energy cost per organism per tick
+  failing: { group: string; lineage: number }[] // CI groups (workflow@branch) whose latest supported result is a failure
+  penalty: number[] // per lineage: extra energy cost per organism per tick while its branch's CI is failing
 }
 
 export type EventKind = 'COMMIT_OBSERVED' | 'PR_OPENED' | 'PR_MERGED' | 'CI_FAILED' | 'CI_PASSED'
@@ -49,17 +49,18 @@ export interface GitEvent {
   id: string // sha, PR number, or run id
   title: string
   url: string | null // GitHub source; null for synthetic events
-  branches: string[] // [] unknown, [head, base] for PRs, [branch] for CI
+  branches: string[] // [] unknown, [head, base] for PRs, [branch] for commits and CI
+  lineage: number // the lineage this event acts on: its branch's (a merge: the base branch's), or -1 for the whole tank
   group: string // CI only: workflow@branch
 }
 
 // Designed simulation rules, not measurements of software quality.
 export const RULES: Record<EventKind, { id: string; effect: string }> = {
-  COMMIT_OBSERVED: { id: 'R-COMMIT-FOOD', effect: 'adds a bounded amount of food' },
+  COMMIT_OBSERVED: { id: 'R-COMMIT-FOOD', effect: "adds a bounded amount of food for its branch's lineage" },
   PR_OPENED: { id: 'R-PR-OPEN', effect: 'shows an interaction between lineages; no ecological effect' },
-  PR_MERGED: { id: 'R-PR-MERGE', effect: 'adds a bounded resource pulse and a visual connection' },
-  CI_FAILED: { id: 'R-CI-FAIL', effect: 'raises the bounded environmental penalty for this workflow and branch' },
-  CI_PASSED: { id: 'R-CI-PASS', effect: "clears this workflow and branch's penalty; the water recovers gradually" },
+  PR_MERGED: { id: 'R-PR-MERGE', effect: "adds a bounded food pulse for the base branch's lineage and a visual connection" },
+  CI_FAILED: { id: 'R-CI-FAIL', effect: "raises the bounded energy cost of its branch's lineage for this workflow" },
+  CI_PASSED: { id: 'R-CI-PASS', effect: "clears this workflow's cost on its branch's lineage; recovery is gradual" },
 }
 
 // Starting parameters from the README; tuning knobs, not measurements.
@@ -75,6 +76,7 @@ export const P = {
   foodPerTick: 0.4, // baseline supply (R-BASELINE): chance of one new particle per tick, with or without Git activity
   commitFood: 12, // particles per deduplicated commit
   mergeFood: 40, // particles per confirmed merge
+  founders: 4, // a commit or merge on a branch tops its lineage back up to this many organisms
   penaltyPerGroup: 0.015, // energy per tick for each failing CI group
   maxPenalty: 0.045,
   penaltyRecovery: 0.0003, // how fast the penalty falls per tick once a group passes
@@ -130,26 +132,37 @@ export function createState(seed: number, lineages = 4): State {
   const s: State = {
     tick: 0, rng: seed | 0, nextId: 1,
     organisms: [], food: [], births: 0, deaths: 0, mutations: 0,
-    tally: Array.from({ length: lineages }, () => ({ born: 0, starved: 0, aged: 0 })),
-    cursor: 0, failing: [], penalty: 0,
+    tally: Array.from({ length: lineages }, () => ({ born: 0, founded: 0, starved: 0, aged: 0 })),
+    cursor: 0, failing: [], penalty: Array.from({ length: lineages }, () => 0),
   }
-  for (let i = 0; i < P.startPopulation; i++) {
-    const genome = {} as Genome
-    for (const t of TRAITS) genome[t] = rand(s)
-    s.organisms.push({
-      id: s.nextId++, lineage: i % lineages, genome, parents: null,
-      ...spot(s), ...level(s),
-      energy: maxEnergy(genome) * 0.6,
-      age: Math.floor(rand(s) * lifespanTicks(genome) * 0.5), // mixed ages so founders don't die together
-      cooldown: 0,
-    })
-  }
-  for (let i = 0; i < P.startFood; i++) s.food.push(spot(s))
+  for (let i = 0; i < P.startPopulation; i++) found(s, i % lineages)
+  addFood(s, P.startFood, -1)
   return s
 }
 
-function addFood(s: State, particles: number) {
-  for (let i = 0; i < particles && s.food.length < P.maxFood; i++) s.food.push(spot(s))
+// A founder: random genes, no parents.
+function found(s: State, lineage: number) {
+  const genome = {} as Genome
+  for (const t of TRAITS) genome[t] = rand(s)
+  s.organisms.push({
+    id: s.nextId++, lineage, genome, parents: null,
+    ...spot(s), ...level(s),
+    energy: maxEnergy(genome) * 0.6,
+    age: Math.floor(rand(s) * lifespanTicks(genome) * 0.5), // mixed ages so founders don't die together
+    cooldown: 0,
+  })
+}
+
+// Food for one lineage, or for anyone when the lineage is -1. Activity on a branch whose lineage has
+// all but died out also re-founds it (R-BRANCH-FOUND): a branch is never deleted by its organisms dying.
+function addFood(s: State, particles: number, lineage: number) {
+  for (let i = 0; i < particles && s.food.length < P.maxFood; i++) s.food.push({ ...spot(s), lineage })
+  if (lineage < 0) return
+  const alive = s.organisms.filter((o) => o.lineage === lineage).length
+  for (let i = alive; i < P.founders && s.organisms.length < P.maxPopulation; i++) {
+    found(s, lineage)
+    s.tally[lineage].founded++
+  }
 }
 
 // `events` is the frozen dataset in replay order; the state only remembers how far it has read.
@@ -158,17 +171,21 @@ export function step(s: State, events: readonly GitEvent[] = []): void {
   // 1. Scheduled repository events.
   for (; s.cursor < events.length && events[s.cursor].tick <= s.tick; s.cursor++) {
     const e = events[s.cursor]
-    if (e.kind === 'COMMIT_OBSERVED') addFood(s, P.commitFood)
-    else if (e.kind === 'PR_MERGED') addFood(s, P.mergeFood)
-    else if (e.kind === 'CI_FAILED') { if (!s.failing.includes(e.group)) s.failing.push(e.group) }
-    else if (e.kind === 'CI_PASSED') s.failing = s.failing.filter((g) => g !== e.group)
+    if (e.kind === 'COMMIT_OBSERVED') addFood(s, P.commitFood, e.lineage)
+    else if (e.kind === 'PR_MERGED') addFood(s, P.mergeFood, e.lineage)
+    else if (e.kind === 'CI_FAILED') { if (!s.failing.some((f) => f.group === e.group)) s.failing.push({ group: e.group, lineage: e.lineage }) }
+    else if (e.kind === 'CI_PASSED') s.failing = s.failing.filter((f) => f.group !== e.group)
   }
+  // Each lineage pays for the failing groups on its own branch (and for any on an unknown branch).
   // Failures bite at once; recovery is gradual.
-  const target = Math.min(P.maxPenalty, s.failing.length * P.penaltyPerGroup)
-  s.penalty = s.penalty < target ? target : Math.max(target, s.penalty - P.penaltyRecovery)
+  for (let l = 0; l < s.penalty.length; l++) {
+    const groups = s.failing.filter((f) => f.lineage === l || f.lineage < 0).length
+    const target = Math.min(P.maxPenalty, groups * P.penaltyPerGroup)
+    s.penalty[l] = s.penalty[l] < target ? target : Math.max(target, s.penalty[l] - P.penaltyRecovery)
+  }
 
-  // 2. Baseline resources.
-  if (rand(s) < P.foodPerTick) addFood(s, 1)
+  // 2. Baseline resources, shared by every lineage.
+  if (rand(s) < P.foodPerTick) addFood(s, 1, -1)
 
   // 3-5. Perception, movement, eating, energy, age.
   // Directions as they were when the tick began, so schooling does not depend on update order.
@@ -184,6 +201,7 @@ export function step(s: State, events: readonly GitEvent[] = []): void {
     let target = -1
     let best = sight * sight
     for (let i = 0; i < s.food.length; i++) {
+      if (s.food[i].lineage >= 0 && s.food[i].lineage !== o.lineage) continue // another lineage's food
       const dx = s.food[i].x - o.x
       const dy = s.food[i].y - o.y
       const dz = s.food[i].z - o.z
@@ -295,7 +313,7 @@ export function step(s: State, events: readonly GitEvent[] = []): void {
       P.baseCost * (0.5 + g.metabolism) * (0.5 + g.bodyLength) +
       P.moveCost * speed * speed +
       P.senseCost * sight +
-      s.penalty
+      s.penalty[o.lineage]
     o.age++
     if (o.cooldown > 0) o.cooldown--
   }

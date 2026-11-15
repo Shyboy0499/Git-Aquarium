@@ -6,8 +6,8 @@ export interface Sample {
   tick: number
   pop: number[] // living organisms per lineage
   energy: number // mean energy across the tank
-  stress: number // 0..1 of the maximum CI penalty
-  tally: { born: number; starved: number; aged: number }[] // cumulative, per lineage
+  stress: number[] // per lineage: 0..1 of the maximum CI penalty
+  tally: { born: number; founded: number; starved: number; aged: number }[] // cumulative, per lineage
 }
 
 export interface Context {
@@ -60,35 +60,42 @@ export function explain(question: string, c: Context): Answer {
   const recent = c.samples.filter((s) => s.tick >= now.tick - WINDOW)
   let then = recent[0]
   for (const s of recent) if (Math.abs(size(s) - size(now)) > Math.abs(size(then) - size(now))) then = s
-  const count = (cause: 'born' | 'starved' | 'aged') => total(pick(now.tally).map((t) => t[cause])) - total(pick(then.tally).map((t) => t[cause]))
+  const count = (cause: 'born' | 'founded' | 'starved' | 'aged') => total(pick(now.tally).map((t) => t[cause])) - total(pick(then.tally).map((t) => t[cause]))
   const born = count('born')
   const starved = count('starved')
   const aged = count('aged')
+  const founded = count('founded')
   const inside = recent.filter((s) => s.tick >= then.tick)
-  const peak = Math.max(...inside.map((s) => s.stress))
-  const percent = (stress: number) => `${Math.round(100 * stress)}%`
+  const stress = (s: Sample) => total(pick(s.stress)) / pick(s.stress).length // its own penalty, or the average over lineages
+  const peak = Math.max(...inside.map(stress))
+  const worst = Math.max(...inside.flatMap((s) => pick(s.stress))) // the hardest-hit lineage in the period
+  const percent = (level: number) => `${Math.round(100 * level)}%`
 
-  const during = c.events.filter((e) => e.tick > then.tick && e.tick <= now.tick)
+  // Events act on the lineage of their branch, so a question about one lineage only counts its own (and any on an unknown branch).
+  const mine = c.events.filter((e) => lineage === null || e.lineage === lineage || e.lineage < 0)
+  const during = mine.filter((e) => e.tick > then.tick && e.tick <= now.tick)
   const of = (kind: EventKind, events = during) => events.filter((e) => e.kind === kind)
-  const before = c.events.filter((e) => e.tick > then.tick - (now.tick - then.tick) && e.tick <= then.tick)
+  const before = mine.filter((e) => e.tick > then.tick - (now.tick - then.tick) && e.tick <= then.tick)
   // CI failures that were still unanswered at some point in the period, even if they happened before it.
-  const failures = of('CI_FAILED', c.events).filter((f) =>
-    !c.events.some((e) => e.kind === 'CI_PASSED' && e.group === f.group && e.tick >= f.tick && e.tick <= then.tick))
+  const failures = of('CI_FAILED', mine).filter((f) =>
+    !mine.some((e) => e.kind === 'CI_PASSED' && e.group === f.group && e.tick >= f.tick && e.tick <= then.tick))
+  const whose = lineage === null ? 'averaged over the lineages' : 'on this lineage'
+  const fed = lineage === null ? '' : ' for this lineage'
   const date = (tick: number) => c.events.filter((e) => e.tick <= tick).pop()?.at.slice(0, 10)
   const dates = date(then.tick) && date(now.tick) ? ` (replay dates ${date(then.tick)} to ${date(now.tick)})` : ''
 
   const facts: Claim[] = [
     { text: `${who} went from ${size(then)} to ${size(now)} organisms between tick ${then.tick} and tick ${now.tick}${dates}.`, evidence: [] },
-    { text: `In that time it recorded ${plural(born, 'birth')}, ${plural(starved, 'death')} from starvation, and ${aged} from old age.`, evidence: [] },
+    { text: `In that time it recorded ${plural(born, 'birth')}, ${plural(starved, 'death')} from starvation, and ${aged} from old age.` + (founded ? ` ${plural(founded, 'founder')} also arrived when a branch with almost no organisms left became active again.` : ''), evidence: [] },
     { text: `Mean energy across the tank went from ${then.energy.toFixed(1)} to ${now.energy.toFixed(1)}.`, evidence: [] },
     {
       text: peak > 0
-        ? `Water stress from failing CI was ${percent(then.stress)} at the start, peaked at ${percent(peak)}, and is ${percent(now.stress)} now.`
-        : 'No CI penalty was active in that time.',
+        ? `The CI penalty ${whose} was ${percent(stress(then))} of its maximum at the start, peaked at ${percent(peak)}, and is ${percent(stress(now))} now.`
+        : `No CI penalty was active ${lineage === null ? '' : 'on this lineage '}in that time.`,
       evidence: peak > 0 ? failures.map(key) : [],
     },
     {
-      text: `${plural(of('COMMIT_OBSERVED').length, 'commit')} and ${plural(of('PR_MERGED').length, 'merge')} were replayed in that time; the same length of time before it had ${plural(of('COMMIT_OBSERVED', before).length, 'commit')}.`,
+      text: `${plural(of('COMMIT_OBSERVED').length, 'commit')} and ${plural(of('PR_MERGED').length, 'merge')} were replayed${fed} in that time; the same length of time before it had ${plural(of('COMMIT_OBSERVED', before).length, 'commit')}.`,
       evidence: [...of('COMMIT_OBSERVED'), ...of('PR_MERGED')].map(key),
     },
   ]
@@ -109,8 +116,8 @@ export function explain(question: string, c: Context): Answer {
   if (Math.abs(change) < Math.max(3, 0.1 * size(then))) {
     interpretation = `${who} was roughly stable: ${plural(born, 'birth')} against ${plural(dead, 'death')}.`
   } else if (change < 0 && peak > 0) {
-    interpretation = `The fall coincides with the CI penalty. While ${plural(new Set(failures.map((f) => f.group)).size, 'workflow-and-branch group')} had an unanswered failure, every organism paid up to ${(peak * P.maxPenalty).toFixed(3)} extra energy per tick, and starvation accounts for ${starved} of the ${plural(dead, 'death')}.` +
-      (commits < earlier ? ` Commits also slowed (${commits} against ${earlier} in the period before), so less food arrived.` : '')
+    interpretation = `The fall coincides with the CI penalty. While ${plural(new Set(failures.map((f) => f.group)).size, 'workflow-and-branch group')} had an unanswered failure, ${lineage === null ? 'the organisms of the affected lineages' : 'each of its organisms'} paid up to ${(worst * P.maxPenalty).toFixed(3)} extra energy per tick, and starvation accounts for ${starved} of the ${plural(dead, 'death')}.` +
+      (commits < earlier ? ` Commits also slowed (${commits} against ${earlier} in the period before), so less food arrived${fed}.` : '')
   } else if (change < 0 && starved >= aged) {
     interpretation = `No CI penalty was active, and most deaths were starvation: ${plural(commits, 'commit')} added food in this period against ${earlier} before it, which did not feed a population of this size.`
   } else if (change < 0) {
@@ -120,7 +127,7 @@ export function explain(question: string, c: Context): Answer {
     interpretation = (commits + merges
       ? `Growth followed the food supply: ${plural(commits, 'commit')} and ${plural(merges, 'merge')} added food, and births outnumbered deaths ${born} to ${dead}.`
       : `No commit or merge was replayed in this period, so the growth came from food already in the tank and the baseline supply: births outnumbered deaths ${born} to ${dead}.`) +
-      (then.stress > now.stress ? ' The water was also clearing after CI passed, which lowered every organism\'s energy cost.' : '')
+      (stress(then) > stress(now) ? ' Its CI penalty was also easing after a workflow passed, which lowered the energy cost.' : '')
   }
   return { facts, rules, interpretation, uncertainty: caveats }
 }

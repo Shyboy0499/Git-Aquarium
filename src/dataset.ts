@@ -9,12 +9,12 @@ export interface Dataset {
   notices: string[] // data boundaries, truncation, and missing records, shown to the user
 }
 
-export type RawEvent = Omit<GitEvent, 'tick'>
+export type RawEvent = Omit<GitEvent, 'tick' | 'lineage'>
 
 export const REPLAY_TICKS = 3600 // the imported window plays in three minutes at 1x
 const WARMUP_TICKS = 100
-const MAX_LINEAGES = 8
-const PAGE = 100 // one page per source keeps an import to four requests
+export const MAX_LINEAGES = 8
+const PAGE = 100 // one page per request
 
 const order = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0) // not localeCompare: must not vary by locale
 
@@ -32,14 +32,17 @@ export function freeze(
     .sort((a, b) => Date.parse(a.at) - Date.parse(b.at) || order(a.kind, b.kind) || order(a.id, b.id))
   const first = valid.length ? Date.parse(valid[0].at) : 0
   const span = valid.length ? Date.parse(valid[valid.length - 1].at) - first : 0
-  const events = valid.map((e) => ({
-    ...e,
-    tick: WARMUP_TICKS + (span ? Math.floor(((Date.parse(e.at) - first) / span) * REPLAY_TICKS) : 0),
-  }))
   if (branches.length > MAX_LINEAGES) {
     notices.push(`Showing the first ${MAX_LINEAGES} of ${branches.length} observed branches as lineages.`)
   }
-  return { source, repo, branches: branches.length ? branches.slice(0, MAX_LINEAGES) : ['unknown'], events, notices }
+  const lineages = branches.length ? branches.slice(0, MAX_LINEAGES) : ['unknown']
+  const events = valid.map((e) => ({
+    ...e,
+    tick: WARMUP_TICKS + (span ? Math.floor(((Date.parse(e.at) - first) / span) * REPLAY_TICKS) : 0),
+    // An event acts on the lineage of its own branch; a merge acts on the branch it merged into.
+    lineage: lineages.indexOf(e.branches[e.kind === 'PR_MERGED' ? 1 : 0]),
+  }))
+  return { source, repo, branches: lineages, events, notices }
 }
 
 // GitHub responses are untrusted: read only the fields we need and check their types.
@@ -48,22 +51,57 @@ const title = (v: unknown) => text(v).split('\n')[0].slice(0, 120)
 const link = (v: unknown) => (typeof v === 'string' && v.startsWith('https://github.com/') ? v : null)
 const list = (v: unknown): any[] => (Array.isArray(v) ? v : [])
 
-export function fromGitHub(
-  repo: string, api: { branches: unknown; commits: unknown; pulls: unknown; runs: unknown },
-): Dataset {
+export interface GitHubData {
+  repo: unknown // repository metadata, for the default branch
+  branches: unknown
+  pulls: unknown
+  runs: unknown
+  commits: Record<string, unknown> // one commit list per lineage branch
+}
+
+// Which branches become lineages: the default branch, then those with the most pull request and CI activity.
+export function pickLineages(api: Pick<GitHubData, 'repo' | 'branches' | 'pulls' | 'runs'>): string[] {
+  const main = text((api.repo as any)?.default_branch)
+  const names = list(api.branches).map((b) => text(b?.name)).filter((name) => name && name !== main)
+  const activity = (name: string) =>
+    list(api.pulls).filter((p) => p?.head?.ref === name || p?.base?.ref === name).length +
+    list(api.runs).filter((r) => r?.head_branch === name).length
+  const score = new Map(names.map((name) => [name, activity(name)]))
+  names.sort((a, b) => score.get(b)! - score.get(a)!) // stable: ties keep GitHub's order
+  return [...(main ? [main] : []), ...names].slice(0, MAX_LINEAGES)
+}
+
+export function fromGitHub(repo: string, api: GitHubData): Dataset {
+  const lineages = pickLineages(api)
+  const observed = list(api.branches).length
   const notices = [
     'Commits replay at their committer timestamp, a proxy rather than a verified push time.',
-    'Branches are a current snapshot; commits are not attributed to a branch.',
+    'Branches are a current snapshot. A commit counts for the default branch if it is there, otherwise for the first lineage branch it was found on.',
   ]
-  const commits: RawEvent[] = list(api.commits).map((c) => ({
-    kind: 'COMMIT_OBSERVED', at: text(c?.commit?.committer?.date), id: text(c?.sha),
-    title: title(c?.commit?.message), url: link(c?.html_url), branches: [], group: '',
+  if (observed > lineages.length) {
+    notices.push(`Showing ${lineages.length} of ${observed} branches as lineages: the default branch and those with the most pull request and CI activity.`)
+  }
+
+  // The default branch is read first, so shared history is credited to it and each other branch keeps only its own commits.
+  const seen = new Set<string>()
+  const commits: RawEvent[] = lineages.flatMap((branch) => list(api.commits[branch]).flatMap((c): RawEvent[] => {
+    const sha = text(c?.sha)
+    if (!sha || seen.has(sha)) return []
+    seen.add(sha)
+    return [{
+      kind: 'COMMIT_OBSERVED', at: text(c?.commit?.committer?.date), id: sha,
+      title: title(c?.commit?.message), url: link(c?.html_url), branches: [branch], group: '',
+    }]
   }))
+
+  // Events on a branch that is not a lineage have nobody to act on, so they are left out and counted.
+  let elsewhere = 0
   const pulls: RawEvent[] = list(api.pulls).flatMap((p) => {
     const pr = {
       id: String(p?.number ?? ''), title: title(p?.title), url: link(p?.html_url),
       branches: [text(p?.head?.ref), text(p?.base?.ref)], group: '',
     }
+    if (!lineages.includes(pr.branches[1])) { elsewhere++; return [] }
     const opened: RawEvent = { ...pr, kind: 'PR_OPENED', at: text(p?.created_at) }
     return p?.merged_at ? [opened, { ...pr, kind: 'PR_MERGED' as EventKind, at: text(p.merged_at) }] : [opened]
   })
@@ -75,26 +113,32 @@ export function fromGitHub(
       : null
     if (!kind) { ignored++; return [] }
     const branch = text(r?.head_branch)
+    if (!lineages.includes(branch)) { elsewhere++; return [] }
     return [{
       kind, at: text(r?.updated_at), id: String(r?.id ?? ''), title: title(`${text(r?.name)}: ${r.conclusion}`),
       url: link(r?.html_url), branches: [branch], group: `${r?.workflow_id}@${branch}`,
     }]
   })
   if (api.runs === null) notices.push('GitHub Actions data was unavailable; CI effects are missing, not passing.')
-  else if (!runs.length) notices.push('No supported GitHub Actions results found; CI effects are missing, not passing.')
+  else if (!runs.length) notices.push('No supported GitHub Actions results on the lineage branches; CI effects are missing, not passing.')
   if (ignored) notices.push(`${ignored} workflow runs with other conclusions (cancelled, skipped, ...) were ignored.`)
+  if (elsewhere) notices.push(`${elsewhere} pull requests and workflow runs were on branches that are not shown as lineages; they were left out.`)
 
   // A source that filled its page is truncated, so start the window where every source is complete.
+  // Dates come from the raw responses: what was left out above still tells us how far back a page reached.
+  const dates = (records: unknown, field: (r: any) => unknown) =>
+    list(records).map((r) => Date.parse(text(field(r)))).filter(Number.isFinite)
   let start = -Infinity
-  for (const [name, source, size] of [
-    ['commits', commits, list(api.commits).length],
-    ['pull requests', pulls, list(api.pulls).length],
-    ['workflow runs', runs, list(api.runs).length],
-  ] as const) {
-    if (size < PAGE) continue
-    notices.push(`Only the ${PAGE} most recent ${name} were imported; older ones are missing.`)
-    start = Math.max(start, Math.min(...source.map((e) => Date.parse(e.at)).filter(Number.isFinite)))
+  const full = (name: string, reached: number[], size: number) => { // returns whether this source was cut off
+    if (size < PAGE) return false
+    if (reached.length) start = Math.max(start, Math.min(...reached))
+    if (name) notices.push(`Only the ${PAGE} most recent ${name} were imported; older ones are missing.`)
+    return true
   }
+  const cut = lineages.filter((b) => full('', dates(api.commits[b], (c) => c?.commit?.committer?.date), list(api.commits[b]).length))
+  if (cut.length) notices.push(`Only the ${PAGE} most recent commits on ${cut.length === 1 ? cut[0] : `each of ${cut.length} branches`} were imported; older ones are missing.`)
+  full('pull requests', dates(api.pulls, (p) => p?.created_at), list(api.pulls).length)
+  full('workflow runs', dates(api.runs, (r) => r?.updated_at), list(api.runs).length)
   const all = [...commits, ...pulls, ...runs]
   const kept = all.filter((e) => !(Date.parse(e.at) < start))
   if (kept.length < all.length) {
@@ -103,16 +147,17 @@ export function fromGitHub(
       `${all.length - kept.length} older records were left out because another source was truncated.`,
     )
   }
-  return freeze('recorded', repo, list(api.branches).map((b) => text(b?.name)).filter(Boolean), kept, notices)
+  return freeze('recorded', repo, lineages, kept, notices)
 }
 
 // Reads one public repository straight from the browser: GitHub's REST API allows it, so no server or token is needed.
-// ponytail: unauthenticated = 60 requests/hour per IP (15 imports); add a token-holding server if that is too few.
+// ponytail: unauthenticated = 60 requests/hour per IP, and an import costs 4 plus one per lineage (at most 12);
+// add a token (issue #8) if that is too few.
 export async function importRepo(input: string): Promise<Dataset> {
   const repo = input.trim().match(/^(?:https?:\/\/github\.com\/)?([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/)?.[1]
   if (!repo) throw new Error('Enter a public repository as owner/repo or a github.com URL.')
   const get = async (path: string) => {
-    const res = await fetch(`https://api.github.com/repos/${repo}/${path}`, {
+    const res = await fetch(`https://api.github.com/repos/${repo}${path}`, {
       headers: { Accept: 'application/vnd.github+json' },
     })
     if (res.status === 404) throw new Error('Repository not found, or it is private.')
@@ -122,11 +167,14 @@ export async function importRepo(input: string): Promise<Dataset> {
     if (!res.ok) throw new Error(`GitHub returned ${res.status}.`)
     return res.json()
   }
-  const [branches, commits, pulls, runs] = await Promise.all([
-    get(`branches?per_page=${PAGE}`),
-    get(`commits?per_page=${PAGE}`),
-    get(`pulls?state=all&per_page=${PAGE}`),
-    get(`actions/runs?status=completed&per_page=${PAGE}`).then((r) => r?.workflow_runs ?? [], () => null),
+  const [meta, branches, pulls, runs] = await Promise.all([
+    get(''),
+    get(`/branches?per_page=${PAGE}`),
+    get(`/pulls?state=all&per_page=${PAGE}`),
+    get(`/actions/runs?status=completed&per_page=${PAGE}`).then((r) => r?.workflow_runs ?? [], () => null),
   ])
-  return fromGitHub(repo, { branches, commits, pulls, runs })
+  const api = { repo: meta, branches, pulls, runs }
+  const lists = await Promise.all(pickLineages(api).map(async (branch) =>
+    [branch, await get(`/commits?sha=${encodeURIComponent(branch)}&per_page=${PAGE}`)] as const))
+  return fromGitHub(repo, { ...api, commits: Object.fromEntries(lists) })
 }

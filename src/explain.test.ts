@@ -11,7 +11,7 @@ function replay(ticks: number): Context {
     if (i % P.ticksPerSecond === 0) {
       const pop = demo.branches.map((_, lineage) => s.organisms.filter((o) => o.lineage === lineage).length)
       const energy = s.organisms.reduce((sum, o) => sum + o.energy, 0) / (s.organisms.length || 1)
-      samples.push({ tick: s.tick, pop, energy, stress: s.penalty / P.maxPenalty, tally: structuredClone(s.tally) })
+      samples.push({ tick: s.tick, pop, energy, stress: s.penalty.map((p) => p / P.maxPenalty), tally: structuredClone(s.tally) })
     }
     step(s, demo.events)
   }

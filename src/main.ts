@@ -5,7 +5,7 @@ import './style.css'
 import { importRepo, type Dataset } from './dataset'
 import { demo } from './demo'
 import { explain, key, parseAnswer, summarize, unknownEvidence, type Answer, type Claim, type Context, type Sample } from './explain'
-import { P, RULES, TRAITS, lifespanTicks, maxEnergy, type EventKind, type Organism, type State } from './sim'
+import { P, RULES, TRAITS, hashState, lifespanTicks, maxEnergy, type EventKind, type Organism, type State } from './sim'
 import { COLORS, createTank, silhouette, type Swimmer } from './tank'
 import type { Command } from './worker'
 
@@ -203,6 +203,8 @@ function report(s: State) {
   $('#s-deaths').textContent = String(s.deaths)
   $('#s-mutations').textContent = String(s.mutations)
   $('#s-stress').textContent = `${stress}%`
+  // While paused, show the state hash: the reproducibility contract made checkable by eye.
+  $('#tick').textContent = `tick ${s.tick}${running ? '' : ` · state ${hashState(s)}`}`
   const legend = $('#legend').children
   counts.forEach((c, i) => {
     if (!legend[i]) return

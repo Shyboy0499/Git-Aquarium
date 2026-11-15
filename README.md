@@ -2,7 +2,7 @@
 
 **Your repository is an ecosystem. Your code is alive.**
 
-![Timelapse of the built-in demo in a 3D aquarium: fish multiply as commits arrive, the water turns murky and the population collapses while CI is failing, then it clears and recovers after fixes and merges. One fish is followed in the side panel until it starves, and a chart tracks each lineage.](docs/demo.gif)
+![Timelapse of the built-in demo in a 3D aquarium: each branch is its own kind of fish and is fed in its own colour as commits arrive. When CI fails on three branches their fish thin out while the fourth branch carries on, then the main branch recovers as fixes and merges land. One fish is followed in the side panel until it starves, and a chart tracks each lineage.](docs/demo.gif)
 
 *The built-in demo as a timelapse: 30 days of a fictional repository replayed as a living aquarium. It takes about three minutes at normal speed.*
 
@@ -14,21 +14,21 @@ The goal is to make software history visible, explorable, and explainable throug
 
 ## What you are watching
 
-The timelapse is the built-in synthetic demo with seed 1: 67 fictional repository events replayed against a living population. Reset with the same seed and it plays out the same way every time.
+The timelapse is the built-in synthetic demo with seed 1: 68 fictional repository events on four branches replayed against a living population. Reset with the same seed and it plays out the same way every time.
 
 | Replay | Repository activity | In the aquarium |
 | --- | --- | --- |
-| Days 0–9 | Two commits a day, one pull request opened | Every commit drops food and the population grows from 64 to about 105 |
-| Days 9–16 | Three CI workflows fail on three branches while commits slow down | The water turns murky, every organism pays an energy penalty, and the population falls to about 30 |
-| Days 16–30 | Each workflow passes again, two pull requests merge, and commits return at three a day | The water clears gradually, each merge releases a pulse of food, and the population recovers to about 70 |
+| Days 0–9 | Two commits a day spread over all four branches, most of them on `main` | Each commit drops food in its own branch's colour. The tank grows from 64 to about 100, and `main` grows most |
+| Days 9–16 | CI fails on `main`, `feature/coral-cache`, and `fix/pump-timeout`, and work on them stops. Only `experiment/glow` keeps getting commits | The three failing lineages pay an energy penalty and get no food, so they shrink (`main` from about 33 to 14). The experiment's lineage holds steady at about 20. The tank falls to about 42 |
+| Days 16–30 | Each workflow passes again. The two finished branches merge into `main` and go quiet, while `main` and the experiment carry on | Each merge releases food for `main`, which recovers to about 34, level with the experiment. The two merged branches stay small. The tank ends near 80 |
 
 How to read the tank:
 
-- **Species and colour** are the lineage, one per observed branch: each branch is its own kind of fish (a reef fish, a slim dart, a tall disc, a fantail), shown beside its name in the legend. Fish of a lineage school together, and each fish's own `hue` gene shifts its shade slightly. With more than four branches the four shapes repeat in new colours.
+- **Species and colour** are the lineage, one per observed branch: each branch is its own kind of fish (a reef fish, a slim dart, a tall disc, a fantail), shown beside its name in the legend. Repository events act on the lineage of their own branch, so a lineage does well when its branch is active and its CI is passing. Fish of a lineage school together, and each fish's own `hue` gene shifts its shade slightly. With more than four branches the four shapes repeat in new colours.
 - **A pale, washed-out fish** is a hungry one; colour returns as it feeds.
 - **Size, slimness, fin size, and tail-beat speed** come from each fish's genes: faster swimmers are slimmer and beat their tails faster.
-- **Yellow pellets** are food. Commits and merges add it; a small baseline supply never stops.
-- **Murky green water** means a CI workflow is failing, or the tank is still recovering from one that was.
+- **Coloured pellets** are food for the lineage of that colour: a commit feeds its own branch's lineage, and a merge feeds the lineage of the branch it merged into. **Pale pellets** are the small baseline supply, which anyone may eat.
+- **Murky green water** means CI is failing somewhere. Only the lineage of the failing branch pays for it: its entry in the Lineages list is marked "CI penalty" and its fish turn pale as they go hungry. The water shows the average across lineages.
 - **A dashed arc** joins a fish from each lineage when a pull request opens between their branches; **a solid arc** marks a merge.
 - **A fish that grows in from nothing** was just born; **one that fades and sinks** has died.
 - **The timeline** under the tank marks every event: red for a CI failure, white for a merge.
@@ -40,7 +40,7 @@ How to read the tank:
 
 ### Ask why
 
-![The Ecologist answering "Why did the population change?" during the demo's CI failures, with facts, applied rules, interpretation, and uncertainty in separate sections and the cited events listed under each statement](docs/ecologist.png)
+![The Ecologist answering "Why did the population change?" about the `main` lineage alone during the demo's CI failures, with facts, applied rules, interpretation, and uncertainty in separate sections and the cited events listed under each statement](docs/ecologist.png)
 
 The Ecologist answers from what was recorded, in four parts: facts, the rules that ran, an interpretation, and what the records cannot establish. Each statement lists the replayed events it rests on, linked to GitHub when the data is real. The answer above was written by fixed rules, and is labelled as such.
 
@@ -100,15 +100,16 @@ These mappings are designed simulation rules, not measurements of software quali
 
 | Input | Planned aquarium effect | Interpretation boundary |
 | --- | --- | --- |
-| Observed branch snapshot | Initialize a lineage and its starting population | A current branch snapshot does not establish its historical creation time |
-| Deduplicated commit | Add a bounded amount of food | Commit volume is not a quality or productivity score |
+| Observed branch snapshot | Initialize a lineage and its starting population. Up to eight branches: the default branch, then those with the most pull request and CI activity | A current branch snapshot does not establish its historical creation time |
+| Deduplicated commit | Add a bounded amount of food for its branch's lineage | Commit volume is not a quality or productivity score |
 | Pull request opened | Display an interaction between relevant lineages | Opening a PR is not a merge or biological reproduction |
-| Confirmed PR merge | Add a bounded resource pulse and a visual connection | A Git merge does not require simulated crossbreeding |
-| Supported CI failure or timeout | Increase a bounded environmental penalty | Failure does not establish poor overall code quality |
+| Confirmed PR merge | Add a bounded food pulse for the base branch's lineage, and a visual connection | A Git merge does not require simulated crossbreeding |
+| Supported CI failure or timeout | Increase a bounded energy cost for its branch's lineage only | Failure does not establish poor overall code quality |
 | Subsequent CI success in the same workflow and branch group | Clear that group's failure contribution and allow gradual recovery | Success in one group does not clear failures in another |
-| No new Git records | Continue the configured baseline resource supply | Baseline food is a simulation rule, not fabricated Git activity |
+| No new Git records | Continue the configured baseline resource supply, shared by every lineage | Baseline food is a simulation rule, not fabricated Git activity |
+| Commit or merge on a branch whose lineage has fewer than four organisms | Bring the lineage back up to four founders (R-BRANCH-FOUND) | Organisms dying never deletes a branch; founders have random genes and no parents |
 
-Shared commits will be deduplicated by repository and SHA. Unknown historical branch attribution will remain explicit, and resource effects will be capped so that busy repositories cannot create unlimited populations.
+Shared commits will be deduplicated by repository and SHA. A commit counts for the default branch if it is there, otherwise for the first lineage branch it was found on. Pull requests and workflow runs on branches that are not shown as lineages are left out and counted on screen. Unknown historical branch attribution will remain explicit, and resource effects will be capped so that busy repositories cannot create unlimited populations.
 
 ### Data boundaries
 
@@ -184,7 +185,7 @@ flowchart TD
 - `src/main.ts` and `src/style.css`: the page, controls, event log, organism panel, chart, and Ecologist panel. Motion is blended between simulation ticks at display frame rate. The two typefaces (Fraunces and Martian Mono) are bundled at build time, so the page still loads nothing from the network.
 - `vite.config.ts`: the optional model endpoint, `POST /api/explain`, served by `pnpm dev` and `pnpm preview` only. The Anthropic SDK is a development dependency used here and nowhere in the page.
 
-The import calls GitHub's public REST API directly from the browser, so there is no server and no token. That limits it to GitHub's unauthenticated quota of 60 requests per hour (four per import) and to the 100 most recent commits, pull requests, and workflow runs; whatever is cut off is listed on screen. React, PixiJS, the workspace split, Fastify, Zod, IndexedDB, and Playwright were not needed to meet the MVP and have not been introduced: the page is plain TypeScript and DOM, the model endpoint is a few lines of dev-server middleware, nothing is saved between visits, and browser checks were run with a script driving headless Chrome rather than a test suite in the repository.
+The import calls GitHub's public REST API directly from the browser, so there is no server and no token. That limits it to GitHub's unauthenticated quota of 60 requests per hour (four per import plus one per lineage, so at most twelve) and to the 100 most recent commits, pull requests, and workflow runs; whatever is cut off is listed on screen. React, PixiJS, the workspace split, Fastify, Zod, IndexedDB, and Playwright were not needed to meet the MVP and have not been introduced: the page is plain TypeScript and DOM, the model endpoint is a few lines of dev-server middleware, nothing is saved between visits, and browser checks were run with a script driving headless Chrome rather than a test suite in the repository.
 
 The simulation package will not depend on React, PixiJS, network access, or storage APIs. Rendering will consume state without changing it. AI responses will explain recorded state without controlling organisms.
 
@@ -281,7 +282,7 @@ The initial performance target for a specified desktop test machine is an averag
 
 ### Validation results
 
-Measured on 2026-11-15 on one machine: Apple M5, 24 GB, Node.js 22.21.1, and Chrome 157 running headless with GPU rendering at 1440 by 1000. The unit tests are in the repository (`pnpm test`, 8 tests). The browser checks were run by a script and are not part of the repository.
+Measured on 2026-11-15 on one machine: Apple M5, 24 GB, Node.js 22.21.1, and Chrome 157 running headless with GPU rendering at 1440 by 1000. The unit tests are in the repository (`pnpm test`, 9 tests). The browser checks were run by a script and are not part of the repository. The frame rate, tick time, and stability figures were measured before events were made to act on their own lineage and were not repeated; the two live imports were.
 
 | Target | Result |
 | --- | --- |
@@ -293,8 +294,8 @@ Measured on 2026-11-15 on one machine: Apple M5, 24 GB, Node.js 22.21.1, and Chr
 | Missing-data and truncation notices | Pass (unit test), and three notices appeared on a live import |
 | Rejection of nonexistent AI evidence references | Pass (unit test), and end to end against a stand-in model server |
 | Offline demo | The demo makes no request to another site. Asking the Ecologist tries the local endpoint and falls back when it is absent |
-| Import, inspect, explain, reset | Pass on a live import of this repository: 16 commits, 3 pull requests, 3 merges, 0 CI runs, with every evidence link pointing to github.com |
-| CI mapping on live data | Pass on a live import of `vitejs/vite`: 76 workflow runs became 17 failure and 59 success events, water stress peaked at 100%, and the explanation cited R-CI-FAIL and R-CI-PASS |
+| Import, inspect, explain, reset | Pass on a live import of this repository: 26 commits, 4 pull requests, 4 merges, 0 CI runs, with every evidence link pointing to github.com |
+| Per-branch mapping on live data | Pass on a live import of `vitejs/vite`: 8 lineages, 11 workflow runs on their branches, and at most 2 lineages under a CI penalty at once while the others were unaffected |
 | Phone width (430 px) | Pass: single column with no horizontal scrolling |
 | A browser without WebGL | Pass in Chrome with WebGL disabled: a message replaces the tank, and the measurements, chart, event log, lineage filter, pause, and Ecologist all work |
 | 15-minute stability run and repeated resets | Pass: 72,000 ticks at 4x in 15 minutes at a steady 60 frames per second, memory between 35 and 57 MB with no growth, no errors, and 20 resets that each returned the same tick-0 state hash |
@@ -306,15 +307,15 @@ Not validated:
 - **Across engines.** Node.js 22 and Chrome 157 give different state hashes from tick 0, because `Math.cos` differs in the last bit for one starting direction. Replays are reproducible within one engine, which is the scope stated under [Reproducibility](#reproducibility).
 - **The real model.** No API key was used. See [AI Ecologist](#ai-ecologist).
 - **Frame rate with 200 organisms.** Only the simulation tick time was measured at that size.
-- **Busy repositories replay a short window.** A live import of `vitejs/vite` brought in 76 CI runs (17 failed) and the water reached full stress, but its 100 most recent runs span so little time that the replay held only one commit. The import says so under Data boundaries; a longer history needs more than one page per source.
+- **Busy repositories replay a short window.** A live import of `vitejs/vite` held only two commits, because its 100 most recent workflow runs span so little time. The import says so under Data boundaries; a longer history needs more than one page per source (issue #8). With so little history, the differences between its lineages are still mostly chance.
 
 ### Three-minute demonstration
 
 1. Open the app. The demo starts on its own; the badge says the data is synthetic.
 2. Click a fish and read its genome, then click a lineage in the list to follow one branch.
-3. Around day 9 three CI workflows fail: the water turns murky, the chart is shaded, and the population falls.
-4. Ask the Ecologist "Why did the population change?" and read the facts, rules, and cited events.
-5. Watch CI pass and two pull requests merge: the water clears and the population recovers.
+3. Around day 9 CI fails on three branches: their lineages are marked "CI penalty" and shrink, while the fourth carries on. Click a failing lineage to see its line fall in the chart.
+4. With that lineage still selected, ask the Ecologist "Why did the population change?" and read the facts, rules, and cited events for that branch.
+5. Watch CI pass and two pull requests merge: `main` recovers on the merge food, and the merged branches go quiet.
 6. Pause, note the tick and state hash, reset, and pause at the same tick: the hash is the same.
 7. Import a public repository and open "Data boundaries" to see what was truncated or missing.
 

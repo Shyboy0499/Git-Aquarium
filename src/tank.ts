@@ -14,6 +14,7 @@ export interface Swimmer {
   ux: number; uy: number; uz: number
   energy: number // 0..1 of its capacity
   grown: number // 0..1, for growing in at birth and shrinking away at death
+  dim: boolean // faded into the water while another lineage is being filtered on
 }
 
 const CLEAR = { top: '#7cc6dc', fog: '#1f6c8e', density: 0.066 }
@@ -370,7 +371,8 @@ export function createTank(canvas: HTMLCanvasElement) {
         dummy.updateMatrix()
         mesh.setMatrixAt(i, dummy.matrix)
         tint.set(COLORS[s.lineage % COLORS.length]).offsetHSL((s.genome.hue - 0.5) * 0.07, 0, 0)
-        mesh.setColorAt(i, tint.lerp(pale, 0.6 * (1 - s.energy) ** 2)) // paler = hungrier
+        tint.lerp(pale, 0.6 * (1 - s.energy) ** 2) // paler = hungrier
+        mesh.setColorAt(i, s.dim ? tint.lerp(fog.color, 0.8) : tint)
         swim.setXYZ(i, s.id * 1.7, 5 + 7 * s.genome.speed, s.genome.finSize)
       }
       for (const { mesh, swim } of shoals) {

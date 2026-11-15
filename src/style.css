@@ -26,14 +26,14 @@ body {
 }
 html { background: var(--abyss); }
 
-h1, h2, p, ul, ol, dl, dd, fieldset { margin: 0; padding: 0; }
+h1, h2, h3, p, ul, ol, dl, dd, fieldset { margin: 0; padding: 0; }
 ul, ol { list-style: none; }
 fieldset { border: 0; min-width: 0; }
 a { color: var(--glow); text-underline-offset: 3px; }
 :focus-visible { outline: 2px solid var(--glow); outline-offset: 2px; }
 
 /* Small uppercase mono is the label voice everywhere. */
-h2, label, legend, dt, .caption, .badge, #log .when, #log .kind, button, #speed span {
+h2, h3, label, legend, dt, .caption, .badge, #log .when, #log .kind, button, #speed span {
   font: 500 10.5px/1.4 var(--mono);
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -114,7 +114,8 @@ button.ghost:hover { background: none; border-color: var(--glow); color: var(--g
 .view { position: relative; aspect-ratio: 8 / 5; }
 canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
 #overlay { pointer-events: none; }
-.view p { margin: 0; padding: 24px; color: var(--dim); font-style: italic; } /* shown if WebGL is unavailable */
+#scene { cursor: crosshair; } /* click a fish to inspect it */
+.view p { position: absolute; inset: 0; display: grid; place-items: center; margin: 0; padding: 64px 15%; text-align: center; color: var(--dim); font-style: italic; } /* shown if WebGL is unavailable, clear of the captions */
 .caption {
   position: absolute;
   top: 14px;
@@ -158,6 +159,7 @@ canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
 
 #controls { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; color: var(--dim); }
 #pause { min-width: 82px; }
+#tick { font: 400 11px var(--mono); font-variant-numeric: tabular-nums; }
 #speed { display: flex; align-items: center; gap: 2px; }
 #speed legend { float: left; margin-right: 8px; }
 #speed input { position: absolute; opacity: 0; }
@@ -197,8 +199,26 @@ dt { color: var(--dim); }
 #notices summary { cursor: pointer; font: 500 10.5px var(--mono); letter-spacing: 0.08em; text-transform: uppercase; }
 #notices li { margin-top: 6px; padding-left: 12px; border-left: 1px solid var(--line); }
 
-#legend { display: grid; gap: 8px; }
-#legend li { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; gap: 10px; align-items: center; font: 400 11.5px var(--mono); }
+#legend { display: grid; gap: 2px; }
+#legend button { /* each row filters the tank and chart to its lineage */
+  all: unset;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  padding: 4px 8px;
+  border-radius: 8px;
+  font: 400 11.5px var(--mono);
+  cursor: pointer;
+  transition: opacity 0.2s, background 0.2s;
+}
+#legend { margin: 0 -8px; }
+#legend button:hover { background: rgba(255, 255, 255, 0.05); }
+#legend button:focus-visible { outline: 2px solid var(--glow); outline-offset: 2px; }
+#legend button[aria-pressed='true'] { background: rgba(169, 214, 208, 0.12); }
+#legend.filtered button[aria-pressed='false'] { opacity: 0.45; }
 #legend svg { width: 24px; height: 16px; fill: var(--c); } /* the lineage's species, in its colour */
 #legend span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #legend b { font: 400 18px/1 var(--serif); font-variant-numeric: tabular-nums; }
@@ -229,6 +249,74 @@ dt { color: var(--dim); }
 #log small b { font: 500 10px var(--mono); letter-spacing: 0.04em; color: var(--ink); }
 #log a { font-size: 13px; }
 #log .new { animation: surface 0.5s both; }
+
+h3 { margin: 14px 0 6px; color: var(--dim); }
+.hint { color: var(--dim); font-style: italic; font-size: 14px; }
+.who { display: flex; align-items: center; gap: 10px; }
+.who svg { flex: none; width: 30px; height: 20px; fill: var(--c); }
+.who strong { font: 400 24px/1 var(--serif); font-variant-numeric: tabular-nums; }
+.who span { font: 400 11.5px var(--mono); overflow-wrap: anywhere; }
+#organism dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 14px; margin-top: 12px; font-size: 14px; }
+#organism dt { padding-top: 3px; }
+#organism dd button { margin: 0 6px 4px 0; padding: 3px 10px; }
+.genome { display: grid; gap: 5px; }
+.genome li { display: grid; grid-template-columns: 112px minmax(0, 1fr) 32px; gap: 8px; align-items: center; font: 400 11px var(--mono); }
+.genome i { height: 4px; min-width: 2px; border-radius: 2px; background: var(--glow); }
+.genome b { font-weight: 400; text-align: right; color: var(--dim); }
+
+.chart, .ecologist { animation: rise 0.7s 0.2s both; }
+#plot { position: relative; height: 140px; margin: 14px 4px 24px 30px; }
+#plot svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+#plot svg * { vector-effect: non-scaling-stroke; }
+#band { fill: rgba(226, 190, 120, 0.15); }
+.grid { fill: none; stroke: var(--line); }
+#lines polyline { fill: none; stroke-width: 2; stroke-linejoin: round; transition: opacity 0.2s; }
+#lines .off { opacity: 0.18; }
+#cross { stroke: var(--dim); visibility: hidden; }
+.axis { position: absolute; color: var(--dim); font: 400 10px/1 var(--mono); }
+#y-top, #y-mid { right: 100%; margin-right: 8px; transform: translateY(-50%); }
+#y-top { top: 0; }
+#y-mid { top: 50%; }
+#x-start, #x-end { top: 100%; margin-top: 8px; }
+#x-start { left: 0; }
+#x-end { right: 0; }
+#tip {
+  position: absolute;
+  top: 6px;
+  z-index: 2;
+  min-width: 200px;
+  margin: 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(1, 8, 16, 0.94);
+  pointer-events: none;
+}
+#tip strong { font: 500 10.5px var(--mono); letter-spacing: 0.06em; }
+#tip dl { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 16px; margin: 8px 0; }
+#tip dt, #tip dd { font: 400 11px/1.4 var(--mono); letter-spacing: 0; text-transform: none; color: var(--ink); }
+#tip dd { text-align: right; font-variant-numeric: tabular-nums; }
+#tip dt::before { content: ''; display: inline-block; width: 10px; height: 2px; margin-right: 7px; vertical-align: middle; background: var(--c); }
+#tip small { color: var(--dim); font-size: 12.5px; }
+
+#ask .field { max-width: 620px; }
+#question { flex: 1; min-width: 0; padding: 10px 6px 10px 16px; }
+#suggest { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
+#suggest button { padding: 7px 12px; font: 400 11.5px var(--mono); letter-spacing: 0; text-transform: none; }
+#suggest small { color: var(--dim); font-style: italic; font-size: 13px; }
+#answers { display: grid; gap: 14px; margin-top: 16px; }
+#answers > li { padding: 16px; border: 1px solid var(--line); border-radius: 14px; background: rgba(4, 20, 33, 0.72); }
+#answers > .new { animation: surface 0.5s both; }
+.asked { display: flex; flex-wrap: wrap; gap: 6px 4px; align-items: center; }
+.asked strong { font: italic 500 17px/1.3 var(--serif); }
+#answers small { display: block; margin-top: 6px; color: var(--dim); font-size: 13px; }
+#answers ul { display: grid; gap: 7px; }
+#answers ul li { padding-left: 12px; border-left: 1px solid var(--line); font-size: 14.5px; }
+.refs { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; }
+.refs > * { padding: 2px 7px; border: 1px solid var(--line); border-radius: 999px; color: var(--dim); font: 400 10px/1.4 var(--mono); text-decoration: none; }
+.refs a { color: var(--glow); }
+.badge.rules { background: var(--amber); }
+.badge.model { background: var(--glow); }
 
 @keyframes rise { from { opacity: 0; transform: translateY(14px); } }
 @keyframes surface { from { opacity: 0; transform: translateX(10px); } }

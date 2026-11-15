@@ -33,6 +33,7 @@ export interface State {
   births: number
   deaths: number
   mutations: number
+  tally: { born: number; starved: number; aged: number }[] // the same births and deaths, per lineage and by cause
   cursor: number // index of the next repository event to apply
   failing: string[] // CI groups (workflow@branch) whose latest supported result is a failure
   penalty: number // environmental energy cost per organism per tick
@@ -103,9 +104,9 @@ export const P = {
 }
 
 export const maxEnergy = (g: Genome) => 60 + 80 * g.bodyLength
-const lifespanTicks = (g: Genome) => 1200 + 3600 * g.lifespan
-const sightRange = (g: Genome) => 40 + 155 * g.perceptionRange
-const swimSpeed = (g: Genome) => 0.8 + 2.2 * g.speed
+export const lifespanTicks = (g: Genome) => 1200 + 3600 * g.lifespan
+export const sightRange = (g: Genome) => 40 + 155 * g.perceptionRange
+export const swimSpeed = (g: Genome) => 0.8 + 2.2 * g.speed
 const eatRange = (g: Genome) => 6 + 6 * g.bodyLength
 const mutationChance = (g: Genome) => 0.02 + 0.18 * g.mutationRate
 
@@ -129,6 +130,7 @@ export function createState(seed: number, lineages = 4): State {
   const s: State = {
     tick: 0, rng: seed | 0, nextId: 1,
     organisms: [], food: [], births: 0, deaths: 0, mutations: 0,
+    tally: Array.from({ length: lineages }, () => ({ born: 0, starved: 0, aged: 0 })),
     cursor: 0, failing: [], penalty: 0,
   }
   for (let i = 0; i < P.startPopulation; i++) {
@@ -299,7 +301,11 @@ export function step(s: State, events: readonly GitEvent[] = []): void {
   }
 
   // 6. Deaths: starvation or old age.
-  const alive = s.organisms.filter((o) => o.energy > 0 && o.age < lifespanTicks(o.genome))
+  const alive = s.organisms.filter((o) => {
+    if (o.energy > 0 && o.age < lifespanTicks(o.genome)) return true
+    s.tally[o.lineage][o.energy > 0 ? 'aged' : 'starved']++ // out of energy counts as starvation even at the end of a lifespan
+    return false
+  })
   s.deaths += s.organisms.length - alive.length
   s.organisms = alive
 
@@ -342,6 +348,7 @@ function breed(s: State, a: Organism, b: Organism): Organism {
   b.energy -= paidB
   a.cooldown = b.cooldown = P.cooldown
   s.births++
+  s.tally[a.lineage].born++
   return {
     id: s.nextId++, lineage: a.lineage, genome, parents: [a.id, b.id],
     x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, z: (a.z + b.z) / 2, ...level(s),

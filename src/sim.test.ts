@@ -1,7 +1,7 @@
 import { expect, test } from 'vitest'
 import { fromGitHub } from './dataset'
 import { demo } from './demo'
-import { P, TRAITS, createState, hashState, maxEnergy, step, type GitEvent, type State } from './sim'
+import { P, TRAITS, createState, hashState, lifespanTicks, maxEnergy, step, type GitEvent, type State } from './sim'
 
 function run(seed: number, ticks: number, events: GitEvent[] = [], check?: (s: State) => void): State {
   const s = createState(seed)
@@ -48,6 +48,35 @@ test('the ecosystem stays within its bounds and stays alive', () => {
   expect(s.deaths).toBeGreaterThan(0)
   expect(s.mutations).toBeGreaterThan(0)
   expect(s.organisms.length).toBe(P.startPopulation + s.births - s.deaths)
+  const sum = (key: 'born' | 'starved' | 'aged') => s.tally.reduce((n, t) => n + t[key], 0)
+  expect(sum('born')).toBe(s.births) // the per-lineage record accounts for every birth and death
+  expect(sum('starved') + sum('aged')).toBe(s.deaths)
+  expect(sum('starved')).toBeGreaterThan(0)
+  expect(sum('aged')).toBeGreaterThan(0)
+})
+
+test('only eligible pairs reproduce, and both parents pay', () => {
+  let newest = P.startPopulation
+  let checked = 0
+  run(3, 4000, demo.events, (s) => {
+    for (const child of s.organisms) {
+      if (child.id <= newest) continue
+      const parents = s.organisms.filter((o) => child.parents!.includes(o.id))
+      expect(parents).toHaveLength(2) // two distinct parents, both still alive
+      for (const p of parents) {
+        expect(p.lineage).toBe(child.lineage)
+        expect(p.age).toBeGreaterThanOrEqual(P.maturity * lifespanTicks(p.genome))
+        expect(p.cooldown).toBe(P.cooldown) // so neither can breed again this tick
+        // It had the breeding threshold and paid the breeding cost, so this much is left.
+        expect(p.energy).toBeGreaterThanOrEqual((P.breedEnergy - P.breedCost) * maxEnergy(p.genome) - 1e-9)
+      }
+      expect(child.age).toBe(0)
+      expect(child.energy).toBeLessThanOrEqual(maxEnergy(child.genome))
+      checked++
+    }
+    newest = Math.max(newest, ...s.organisms.map((o) => o.id))
+  })
+  expect(checked).toBeGreaterThan(20)
 })
 
 test('mapping rules: commits and merges add bounded food, CI penalties are tracked per group', () => {

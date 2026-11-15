@@ -2,15 +2,15 @@
 
 **Your repository is an ecosystem. Your code is alive.**
 
-![Timelapse of the built-in demo in a 3D aquarium: fish multiply as commits arrive, the water turns murky and the population collapses while CI is failing, then it clears and recovers after fixes and merges](docs/demo.gif)
+![Timelapse of the built-in demo in a 3D aquarium: fish multiply as commits arrive, the water turns murky and the population collapses while CI is failing, then it clears and recovers after fixes and merges. One fish is followed in the side panel until it starves, and a chart tracks each lineage.](docs/demo.gif)
 
 *The built-in demo as a timelapse: 30 days of a fictional repository replayed as a living aquarium. It takes about three minutes at normal speed.*
 
-Git Aquarium is a planned artificial-life simulator that turns GitHub development activity into environmental changes inside a digital aquarium. Virtual organisms forage, consume energy, reproduce, inherit traits, mutate, and die, while repository events influence the resources and conditions around them.
+Git Aquarium is an artificial-life simulator that turns GitHub development activity into environmental changes inside a digital aquarium. Virtual organisms forage, consume energy, reproduce, inherit traits, mutate, and die, while repository events influence the resources and conditions around them.
 
 The goal is to make software history visible, explorable, and explainable through **artificial life, reproducible replay, and evidence-based interpretation**.
 
-> **Project status: weeks 1 and 2 of 4 implemented.** Running today: a seeded, deterministic artificial-life simulation (foraging, energy, reproduction, inheritance, mutation, death), the Git-to-ecology mapping rules, an offline synthetic demo, import of one public GitHub repository, and replay with pause, 1x / 2x / 4x speed, reset, and seed. Organism inspection, charts, and the AI Ecologist are not implemented yet; the sections describing them, and all performance figures, are intentions for the four-week course or competition MVP rather than working functionality or measured results.
+> **Project status: the four-week MVP is implemented.** Running today: a seeded, deterministic artificial-life simulation (foraging, energy, reproduction, inheritance, mutation, death), the Git-to-ecology mapping rules, an offline synthetic demo, import of one public GitHub repository, replay with pause, 1x / 2x / 4x speed, reset, and seed, organism inspection, lineage filtering, a population chart, and the Ecologist. The Ecologist explains by fixed rules unless a model key is supplied; the model path was tested against a stand-in server and has not been run against the real API. Measured results and known gaps are under [Validation results](#validation-results). Sections written in the future tense describe the original proposal, and each says where the implementation differs.
 
 ## What you are watching
 
@@ -33,6 +33,16 @@ How to read the tank:
 - **A fish that grows in from nothing** was just born; **one that fades and sinks** has died.
 - **The timeline** under the tank marks every event: red for a CI failure, white for a merge.
 - **The panel on the right** lists each replayed event, the rule it triggered, and a link to its GitHub source when the data is real.
+- **Click a fish** to follow it: a ring tracks it and the Organism panel shows its genome, energy, age, and parents, then how it died. Click open water to let it go.
+- **Click a lineage** to fade the others in the tank and the chart. The Ecologist then answers about that lineage alone.
+- **The chart** under the measurements plots each lineage's population, shaded while a CI penalty is active. Hover for the exact counts.
+- **The tick readout** beside the speed control also shows a hash of the whole state while paused. The same seed and dataset give the same hash at the same tick.
+
+### Ask why
+
+![The Ecologist answering "Why did the population change?" during the demo's CI failures, with facts, applied rules, interpretation, and uncertainty in separate sections and the cited events listed under each statement](docs/ecologist.png)
+
+The Ecologist answers from what was recorded, in four parts: facts, the rules that ran, an interpretation, and what the records cannot establish. Each statement lists the replayed events it rests on, linked to GitHub when the data is real. The answer above was written by fixed rules, and is labelled as such.
 
 Move the pointer over the tank to shift the view.
 
@@ -64,7 +74,7 @@ Repository
 6. Ask the AI Ecologist why an observed change occurred.
 7. Reset with the same seed and dataset to reproduce the experiment.
 
-Steps 1, 2, 3, and 7 work today, and step 5 exists as an event log that shows every replayed event with its rule and source link. Steps 4 and 6 are planned.
+All seven steps work today. Step 5 is an event log that shows every replayed event with its rule and source link. Step 6 answers by fixed rules unless a model key is supplied (see [AI Ecologist](#ai-ecologist)).
 
 The built-in demo works without network access. Synthetic demonstration events and recorded repository data are labeled separately.
 
@@ -164,21 +174,23 @@ flowchart TD
 | Workspace | pnpm workspace |
 | Testing | Vitest and Playwright |
 
-**Current implementation (weeks 1 and 2):** a single Vite + TypeScript package whose only runtime dependency is Three.js. The aquarium is drawn in 3D, in place of the 2D PixiJS view proposed in the table above.
+**Current implementation:** a single Vite + TypeScript package whose only runtime dependency is Three.js. The aquarium is drawn in 3D, in place of the 2D PixiJS view proposed in the table above.
 
 - `src/sim.ts`: the simulation and the mapping rules, in three dimensions. Fish turn gradually, cruise level, and school with their own lineage. It has no dependencies and runs in a Web Worker (`src/worker.ts`).
 - `src/dataset.ts`: validates, deduplicates, and freezes repository records, and imports one public repository.
 - `src/demo.ts`: the fictional demo history.
 - `src/tank.ts`: the 3D scene: sunlight with shadows, rippling light on the sand, depth haze, and four fish species, plants, and rocks modelled in code, so there are no downloaded art assets. It needs WebGL; without it the measurements and event log still work.
-- `src/main.ts` and `src/style.css`: the page, controls, and event log. Motion is blended between simulation ticks at display frame rate. The two typefaces (Fraunces and Martian Mono) are bundled at build time, so the page still loads nothing from the network.
+- `src/explain.ts`: the Ecologist's rule-based explanation, the bounded summary a model is given, and the checks applied to a model's answer. Pure functions with no DOM or network.
+- `src/main.ts` and `src/style.css`: the page, controls, event log, organism panel, chart, and Ecologist panel. Motion is blended between simulation ticks at display frame rate. The two typefaces (Fraunces and Martian Mono) are bundled at build time, so the page still loads nothing from the network.
+- `vite.config.ts`: the optional model endpoint, `POST /api/explain`, served by `pnpm dev` and `pnpm preview` only. The Anthropic SDK is a development dependency used here and nowhere in the page.
 
-The import calls GitHub's public REST API directly from the browser, so there is no server and no token. That limits it to GitHub's unauthenticated quota of 60 requests per hour (four per import) and to the 100 most recent commits, pull requests, and workflow runs; whatever is cut off is listed on screen. React, PixiJS, the workspace split, Fastify, Zod, and IndexedDB will be introduced when a later milestone needs them.
+The import calls GitHub's public REST API directly from the browser, so there is no server and no token. That limits it to GitHub's unauthenticated quota of 60 requests per hour (four per import) and to the 100 most recent commits, pull requests, and workflow runs; whatever is cut off is listed on screen. React, PixiJS, the workspace split, Fastify, Zod, IndexedDB, and Playwright were not needed to meet the MVP and have not been introduced: the page is plain TypeScript and DOM, the model endpoint is a few lines of dev-server middleware, nothing is saved between visits, and browser checks were run with a script driving headless Chrome rather than a test suite in the repository.
 
 The simulation package will not depend on React, PixiJS, network access, or storage APIs. Rendering will consume state without changing it. AI responses will explain recorded state without controlling organisms.
 
 ### Proposed repository layout
 
-The following structure is the planned end state and has not been scaffolded yet; today all code lives in `src/`:
+The following structure was the proposed end state. It has not been adopted, and all code lives in `src/`:
 
 ```text
 apps/
@@ -226,9 +238,21 @@ Example questions include “Why did this lineage decline?” and “Which recen
 
 When the model is unavailable, the interface will identify its response as a rule-based explanation. Simulated population health will never be presented as a factual score of code quality or developer performance.
 
+**Current implementation.** By default no model is involved: `src/explain.ts` writes the answer from the recorded readings and labels it "Rule-based explanation". It looks back up to 1,200 ticks to the reading that differs most from the present, so a fall is measured from its peak.
+
+To use a model, start the server with a key:
+
+```bash
+ANTHROPIC_API_KEY=your-key pnpm dev
+```
+
+The page then sends `POST /api/explain` a bounded summary: the question, the recorded observations, the rule list, and at most the 40 most recent replayed events with titles cut to 80 characters. No source code is sent, and the key stays in the server process. The endpoint asks `claude-opus-5-5` for the same four-part structure, rejects any answer that cites an event that was not in the summary, and the page checks again before showing it. A rejected or failed answer is replaced by the rule-based one, with a note saying why. Event titles reach the model as untrusted data, and everything it returns is shown as plain text. A static build has no endpoint, so it always answers by rule.
+
+This model path was exercised end to end against a stand-in server, including the rejection of invented evidence. It has not been run against the real API, so the first real call is the test of the request itself.
+
 ## Four-week delivery roadmap
 
-The schedule assumes one developer working approximately 25 hours per week: 90 hours of planned work and 10 hours of final contingency. Milestones are targets, not completed work.
+The schedule assumes one developer working approximately 25 hours per week: 90 hours of planned work and 10 hours of final contingency. This was the plan; all four acceptance gates have since been met, with the gaps listed under [Validation results](#validation-results).
 
 | Week | Focus | Work | Acceptance gate |
 | --- | --- | --- | --- |
@@ -253,7 +277,46 @@ Planned checks include:
 - An offline demo and an end-to-end import → inspect → explain → reset flow.
 - A 15-minute stability run and repeated resets.
 
-The initial performance target for a specified desktop test machine is an average foreground frame rate of at least 50 FPS with 100 organisms and a simulation tick p95 below 10 ms. Additional 200-organism tests will characterize limits. **No benchmarks have been recorded yet.**
+The initial performance target for a specified desktop test machine is an average foreground frame rate of at least 50 FPS with 100 organisms and a simulation tick p95 below 10 ms. Additional 200-organism tests will characterize limits.
+
+### Validation results
+
+Measured on 2026-11-15 on one machine: Apple M5, 24 GB, Node.js 22.21.1, and Chrome 157 running headless with GPU rendering at 1440 by 1000. The unit tests are in the repository (`pnpm test`, 8 tests). The browser checks were run by a script and are not part of the repository.
+
+| Target | Result |
+| --- | --- |
+| Identical state hashes after 10,000 ticks for identical inputs | Pass (unit test) |
+| Matching state at the same tick under 1x and 4x | Pass in Chrome: paused at tick 798 after 1x and at tick 960 after 4x, the worker's state hashes equalled the engine run directly to those ticks |
+| No advancement while paused | Pass: tick and state hash unchanged after 2.5 seconds |
+| Gene bounds, energy range, population and food caps, birth and death accounting, reproduction eligibility | Pass (unit tests) |
+| One commit effect per unique SHA; CI deduplication and workflow/branch state | Pass (unit tests) |
+| Missing-data and truncation notices | Pass (unit test), and three notices appeared on a live import |
+| Rejection of nonexistent AI evidence references | Pass (unit test), and end to end against a stand-in model server |
+| Offline demo | The demo makes no request to another site. Asking the Ecologist tries the local endpoint and falls back when it is absent |
+| Import, inspect, explain, reset | Pass on a live import of this repository: 16 commits, 3 pull requests, 3 merges, 0 CI runs, with every evidence link pointing to github.com |
+| CI mapping on live data | Pass on a live import of `vitejs/vite`: 76 workflow runs became 17 failure and 59 success events, water stress peaked at 100%, and the explanation cited R-CI-FAIL and R-CI-PASS |
+| Phone width (430 px) | Pass: single column with no horizontal scrolling |
+| A browser without WebGL | Pass in Chrome with WebGL disabled: a message replaces the tank, and the measurements, chart, event log, lineage filter, pause, and Ecologist all work |
+| 15-minute stability run and repeated resets | Pass: 72,000 ticks at 4x in 15 minutes at a steady 60 frames per second, memory between 35 and 57 MB with no growth, no errors, and 20 resets that each returned the same tick-0 state hash |
+| At least 50 FPS with 100 organisms | 60.1 frames per second averaged over 10 seconds at 1x with 101 to 107 organisms |
+| Simulation tick p95 below 10 ms | 0.73 ms with 90 to 110 organisms on the demo, and 0.26 ms with 190 to 200 on a synthetic load that holds the tank at its caps (engine alone in Node.js) |
+
+Not validated:
+
+- **Across engines.** Node.js 22 and Chrome 157 give different state hashes from tick 0, because `Math.cos` differs in the last bit for one starting direction. Replays are reproducible within one engine, which is the scope stated under [Reproducibility](#reproducibility).
+- **The real model.** No API key was used. See [AI Ecologist](#ai-ecologist).
+- **Frame rate with 200 organisms.** Only the simulation tick time was measured at that size.
+- **Busy repositories replay a short window.** A live import of `vitejs/vite` brought in 76 CI runs (17 failed) and the water reached full stress, but its 100 most recent runs span so little time that the replay held only one commit. The import says so under Data boundaries; a longer history needs more than one page per source.
+
+### Three-minute demonstration
+
+1. Open the app. The demo starts on its own; the badge says the data is synthetic.
+2. Click a fish and read its genome, then click a lineage in the list to follow one branch.
+3. Around day 9 three CI workflows fail: the water turns murky, the chart is shaded, and the population falls.
+4. Ask the Ecologist "Why did the population change?" and read the facts, rules, and cited events.
+5. Watch CI pass and two pull requests merge: the water clears and the population recovers.
+6. Pause, note the tick and state hash, reset, and pause at the same tick: the hash is the same.
+7. Import a public repository and open "Data boundaries" to see what was truncated or missing.
 
 ## Getting started
 
@@ -264,7 +327,7 @@ git clone https://github.com/jingchangzhao-gif/Git-Aquarium.git
 cd Git-Aquarium
 pnpm install
 pnpm dev     # open the printed local URL
-pnpm test    # determinism, snapshot resume, bounds, mapping rules, and import normalization
+pnpm test    # determinism, snapshot resume, bounds, mapping rules, import normalization, and explanation checks
 pnpm build   # type-check and production build
 ```
 
@@ -274,7 +337,7 @@ The app opens on the synthetic demo, which needs no network access. To replay a 
 
 The MVP will read public repositories only and will not modify code, create commits in imported repositories, merge pull requests, or delete branches.
 
-Optional GitHub and model credentials will remain on the server. Repository text will be treated as untrusted data, and model requests will use structured summaries rather than source-code uploads.
+Optional GitHub and model credentials will remain on the server. Repository text will be treated as untrusted data, and model requests will use structured summaries rather than source-code uploads. Today no GitHub credential is used at all, and the optional model key is read from the environment of the local dev server and never reaches the page.
 
 ## Inspiration and license
 

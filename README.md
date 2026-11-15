@@ -2,7 +2,7 @@
 
 **Your repository is an ecosystem. Your code is alive.**
 
-![Timelapse of the built-in demo: fish multiply as commits arrive, the water turns murky and the population collapses while CI is failing, then it recovers after fixes and merges](docs/demo.gif)
+![Timelapse of the built-in demo in a 3D aquarium: fish multiply as commits arrive, the water turns murky and the population collapses while CI is failing, then it clears and recovers after fixes and merges](docs/demo.gif)
 
 *The built-in demo as a timelapse: 30 days of a fictional repository replayed as a living aquarium. It takes about three minutes at normal speed.*
 
@@ -18,18 +18,23 @@ The timelapse is the built-in synthetic demo with seed 1: 67 fictional repositor
 
 | Replay | Repository activity | In the aquarium |
 | --- | --- | --- |
-| Days 0–9 | Two commits a day, one pull request opened | Every commit drops food and the population grows from 64 to about 115 |
-| Days 9–16 | Three CI workflows fail on three branches while commits slow down | The water turns murky, every organism pays an energy penalty, and the population falls to about 33 |
-| Days 16–30 | Each workflow passes again, two pull requests merge, and commits return at three a day | The water clears gradually, each merge releases a pulse of food, and the population recovers to about 85 |
+| Days 0–9 | Two commits a day, one pull request opened | Every commit drops food and the population grows from 64 to about 105 |
+| Days 9–16 | Three CI workflows fail on three branches while commits slow down | The water turns murky, every organism pays an energy penalty, and the population falls to about 30 |
+| Days 16–30 | Each workflow passes again, two pull requests merge, and commits return at three a day | The water clears gradually, each merge releases a pulse of food, and the population recovers to about 70 |
 
 How to read the tank:
 
-- **Fish colour** is the lineage, one per observed branch. Shade varies with each fish's own `hue` gene.
-- **Brightness** is energy: a dim fish is a hungry fish.
-- **Green dots** are food. Commits and merges add it; a small baseline supply never stops.
-- **Murky water** means a CI workflow is failing, or the tank is still recovering from one that was.
-- **A dashed line** links two lineages when a pull request opens between their branches; **a solid line** marks a merge.
+- **Species and colour** are the lineage, one per observed branch: each branch is its own kind of fish (a reef fish, a slim dart, a tall disc, a fantail), shown beside its name in the legend. Fish of a lineage school together, and each fish's own `hue` gene shifts its shade slightly. With more than four branches the four shapes repeat in new colours.
+- **A pale, washed-out fish** is a hungry one; colour returns as it feeds.
+- **Size, slimness, fin size, and tail-beat speed** come from each fish's genes: faster swimmers are slimmer and beat their tails faster.
+- **Yellow pellets** are food. Commits and merges add it; a small baseline supply never stops.
+- **Murky green water** means a CI workflow is failing, or the tank is still recovering from one that was.
+- **A dashed arc** joins a fish from each lineage when a pull request opens between their branches; **a solid arc** marks a merge.
+- **A fish that grows in from nothing** was just born; **one that fades and sinks** has died.
+- **The timeline** under the tank marks every event: red for a CI failure, white for a merge.
 - **The panel on the right** lists each replayed event, the rule it triggered, and a link to its GitHub source when the data is real.
+
+Move the pointer over the tank to shift the view.
 
 The population figures are simulated measurements from one seeded run. They are not benchmarks and say nothing about code quality.
 
@@ -69,7 +74,7 @@ The built-in demo works without network access. Synthetic demonstration events a
 | --- | --- |
 | Artificial life | Foraging, energy consumption, maturation, reproduction, mutation, and death |
 | Genetics | Eight normalized traits, two-parent inheritance, bounded mutation, and parent references |
-| Aquarium | Interactive 2D rendering, lineage colors, organism selection, and food particles |
+| Aquarium | Interactive rendering (now 3D rather than the 2D first planned), lineage colors, organism selection, and food particles |
 | GitHub import | One public repository; commits, pull requests, and supported GitHub Actions runs |
 | Replay | Play, pause, 1x / 2x / 4x speed, reset, and a configurable random seed |
 | Inspection | Organism details, event evidence, rule identifiers, and lineage filtering |
@@ -159,12 +164,13 @@ flowchart TD
 | Workspace | pnpm workspace |
 | Testing | Vitest and Playwright |
 
-**Current implementation (weeks 1 and 2):** a single Vite + TypeScript package with no runtime dependencies.
+**Current implementation (weeks 1 and 2):** a single Vite + TypeScript package whose only runtime dependency is Three.js. The aquarium is drawn in 3D, in place of the 2D PixiJS view proposed in the table above.
 
-- `src/sim.ts`: the simulation and the mapping rules. It runs in a Web Worker (`src/worker.ts`).
+- `src/sim.ts`: the simulation and the mapping rules, in three dimensions. Fish turn gradually, cruise level, and school with their own lineage. It has no dependencies and runs in a Web Worker (`src/worker.ts`).
 - `src/dataset.ts`: validates, deduplicates, and freezes repository records, and imports one public repository.
 - `src/demo.ts`: the fictional demo history.
-- `src/main.ts`: Canvas 2D rendering, controls, and the event log.
+- `src/tank.ts`: the 3D scene: sunlight with shadows, rippling light on the sand, depth haze, and four fish species, plants, and rocks modelled in code, so there are no downloaded art assets. It needs WebGL; without it the measurements and event log still work.
+- `src/main.ts` and `src/style.css`: the page, controls, and event log. Motion is blended between simulation ticks at display frame rate. The two typefaces (Fraunces and Martian Mono) are bundled at build time, so the page still loads nothing from the network.
 
 The import calls GitHub's public REST API directly from the browser, so there is no server and no token. That limits it to GitHub's unauthenticated quota of 60 requests per hour (four per import) and to the 100 most recent commits, pull requests, and workflow runs; whatever is cut off is listed on screen. React, PixiJS, the workspace split, Fastify, Zod, and IndexedDB will be introduced when a later milestone needs them.
 

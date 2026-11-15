@@ -62,6 +62,39 @@
             <div><dt>Water stress</dt><dd id="s-stress">0%</dd></div>
           </dl>
         </section>
+
+        <section class="chart" aria-labelledby="chart-title">
+          <h2 id="chart-title">Population by lineage <span>shaded while a CI penalty is active</span></h2>
+          <div id="plot">
+            <svg viewBox="0 0 1000 100" preserveAspectRatio="none" role="img" aria-label="Line chart of the population of each lineage over the replay. The Lineages list gives the current counts.">
+              <path id="band" />
+              <path class="grid" d="M0 0.5H1000M0 50H1000M0 99.5H1000" />
+              <g id="lines"></g>
+              <line id="cross" y1="0" y2="100" />
+            </svg>
+            <span id="y-top" class="axis"></span>
+            <span id="y-mid" class="axis"></span>
+            <span id="x-start" class="axis">tick 0</span>
+            <span id="x-end" class="axis"></span>
+            <div id="tip" hidden></div>
+          </div>
+        </section>
+
+        <section class="ecologist" aria-labelledby="ecologist-title">
+          <h2 id="ecologist-title">Ecologist <span>explains recorded changes from recorded evidence</span></h2>
+          <form id="ask">
+            <div class="field">
+              <input id="question" aria-label="Question for the Ecologist" placeholder="Why did the population change?" maxlength="200" autocomplete="off" />
+              <button>Ask</button>
+            </div>
+          </form>
+          <p id="suggest">
+            <button type="button" class="ghost">Why did the population change?</button>
+            <button type="button" class="ghost">Which repository events affected the aquarium?</button>
+            <small>Filter a lineage, or name a branch, to ask about it alone.</small>
+          </p>
+          <ol id="answers" aria-live="polite"></ol>
+        </section>
       </div>
 
       <aside class="panel">
@@ -74,8 +107,12 @@
           </details>
         </section>
         <section>
-          <h2>Lineages <span>one per observed branch</span></h2>
+          <h2>Lineages <span>one per observed branch · click to filter</span></h2>
           <ul id="legend"></ul>
+        </section>
+        <section>
+          <h2>Organism</h2>
+          <div id="organism"></div>
         </section>
         <section>
           <h2>Repository events <span>and their rules</span></h2>

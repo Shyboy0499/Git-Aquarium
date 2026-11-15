@@ -4,7 +4,8 @@ import '@fontsource-variable/martian-mono'
 import './style.css'
 import { importRepo, type Dataset } from './dataset'
 import { demo } from './demo'
-import { P, RULES, maxEnergy, type EventKind, type Organism, type State } from './sim'
+import { explain, key, parseAnswer, summarize, unknownEvidence, type Answer, type Claim, type Context, type Sample } from './explain'
+import { P, RULES, TRAITS, lifespanTicks, maxEnergy, type EventKind, type Organism, type State } from './sim'
 import { COLORS, createTank, silhouette, type Swimmer } from './tank'
 import type { Command } from './worker'
 
@@ -29,10 +30,11 @@ const KIND: Record<EventKind, string> = {
 
 // ---- Canvases ----------------------------------------------------------------------------------
 
-const overlay = $<HTMLCanvasElement>('#overlay') // pull request arcs and labels, drawn over the 3D view
+const scene = $<HTMLCanvasElement>('#scene')
+const overlay = $<HTMLCanvasElement>('#overlay') // pull request arcs, labels, and the selection ring, drawn over the 3D view
 const tank = (() => {
   try {
-    return createTank($<HTMLCanvasElement>('#scene'))
+    return createTank(scene)
   } catch { // no WebGL: the readouts and event log still work
     $('.view').replaceChildren(el('p', 'The aquarium view needs WebGL, which this browser did not provide. The measurements and event log below still work.'))
   }
@@ -53,9 +55,14 @@ let running = true
 let shown = -1 // event cursor the log currently reflects
 const born = new Map<number, number>() // when each newborn first appeared, so it can grow in
 let fading: { o: Organism; at: number }[] = [] // the recently dead, shrinking and sinking
+let samples: Sample[] = [] // one reading a simulated second: the chart and the Ecologist both read this
+let focus: number | null = null // lineage filter
+let selected: { o: Organism; died: string } | null = null // the inspected organism, as last seen
+let drawn: Swimmer[] = [] // the living fish as last drawn, for picking with a click
 
 const worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' })
 const send = (c: Command) => worker.postMessage(c)
+worker.onerror = () => ($('#error').textContent = 'The simulation stopped unexpectedly. Reload the page to start again.')
 worker.onmessage = (e: MessageEvent<State>) => {
   const next = e.data
   const now = performance.now()
@@ -63,6 +70,7 @@ worker.onmessage = (e: MessageEvent<State>) => {
     from = new Map()
     born.clear()
     fading = []
+    samples = []
   } else if (next.tick > cur.tick) {
     from = new Map(cur.organisms.map((o) => [o.id, o]))
     const alive = new Set(next.organisms.map((o) => o.id))
@@ -73,17 +81,28 @@ worker.onmessage = (e: MessageEvent<State>) => {
       fading.push({ o, at: now })
     }
   }
+  if (selected && !selected.died) {
+    const seen = next.organisms.find((o) => o.id === selected!.o.id)
+    if (seen) selected.o = seen
+    else { // gone since the last snapshot: its last reading says which limit it hit
+      const o = selected.o
+      selected.died = `Died at tick ${next.tick} of ${o.age + next.tick - (cur?.tick ?? next.tick) >= lifespanTicks(o.genome) ? 'old age' : 'starvation'}`
+    }
+  }
   cur = next
   arrived = now
   report(next)
 }
 
 // Loading and resetting are the same thing: a fresh state from the same seed and frozen dataset.
-const load = () =>
+function load() {
+  select(null)
   send({ load: { seed: Number($<HTMLInputElement>('#seed').value), lineages: data.branches.length, events: data.events } })
+}
 
 function use(d: Dataset) {
   data = d
+  focus = null
   const count = (...kinds: string[]) => String(d.events.filter((e) => kinds.includes(e.kind)).length)
   const stat = (label: string, value: string) => {
     const div = el('div')
@@ -109,10 +128,22 @@ function use(d: Dataset) {
 
   $('#legend').replaceChildren(...d.branches.map((name, i) => {
     const li = el('li')
-    li.style.setProperty('--c', COLORS[i % COLORS.length])
-    li.append(silhouette(i), el('span', name), el('b'), el('u'))
+    const button = el('button')
+    button.type = 'button'
+    button.title = 'Show only this lineage'
+    button.setAttribute('aria-pressed', 'false')
+    button.style.setProperty('--c', COLORS[i % COLORS.length])
+    button.append(silhouette(i), el('span', name), el('b'), el('u'))
+    button.addEventListener('click', () => filter(focus === i ? null : i))
+    li.append(button)
     return li
   }))
+  $('#lines').replaceChildren(...d.branches.map((_, i) => {
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'polyline')
+    line.style.stroke = COLORS[i % COLORS.length]
+    return line
+  }))
+  filter(null)
   const end = d.events[d.events.length - 1]?.tick ?? 1
   $('#marks').replaceChildren(...d.events.map((e) => {
     const mark = el('i', '', e.kind)
@@ -159,6 +190,13 @@ function report(s: State) {
     counts[o.lineage]++
   }
   const stress = Math.round((100 * s.penalty) / P.maxPenalty)
+  const second = (tick: number) => Math.floor(tick / P.ticksPerSecond)
+  if (!samples.length || second(s.tick) > second(samples[samples.length - 1].tick)) {
+    samples.push({ tick: s.tick, pop: counts, energy: n ? energy / n : 0, stress: s.penalty / P.maxPenalty, tally: s.tally })
+    if (samples.length > 900) samples.shift() // ponytail: the chart and explanations keep the last 15 simulated minutes; thin old readings instead if longer runs matter
+    chart()
+  }
+  vitals()
   $('#s-pop').textContent = String(n)
   $('#s-energy').textContent = n ? (energy / n).toFixed(1) : '0'
   $('#s-births').textContent = String(s.births)
@@ -168,8 +206,9 @@ function report(s: State) {
   const legend = $('#legend').children
   counts.forEach((c, i) => {
     if (!legend[i]) return
-    legend[i].children[2].textContent = String(c)
-    ;(legend[i].children[3] as HTMLElement).style.width = `${n ? (100 * c) / n : 0}%`
+    const row = legend[i].firstElementChild!.children
+    row[2].textContent = String(c)
+    ;(row[3] as HTMLElement).style.width = `${n ? (100 * c) / n : 0}%`
   })
   const end = data.events[data.events.length - 1]?.tick ?? 1
   const progress = Math.min(100, (100 * s.tick) / end)
@@ -208,6 +247,209 @@ function report(s: State) {
   }))
 }
 
+// ---- Inspection: one organism, one lineage ------------------------------------------------------
+
+function filter(lineage: number | null) {
+  focus = lineage
+  const rows = $('#legend').children
+  $('#legend').classList.toggle('filtered', lineage !== null)
+  for (let i = 0; i < rows.length; i++) {
+    rows[i].firstElementChild!.setAttribute('aria-pressed', String(i === lineage))
+    $('#lines').children[i]?.classList.toggle('off', lineage !== null && i !== lineage)
+  }
+}
+
+function select(o: Organism | null) {
+  selected = o && { o, died: '' }
+  const box = $('#organism')
+  if (!o) return box.replaceChildren(el('p', 'Click a fish in the aquarium to follow it and read its genome.', 'hint'))
+  const who = el('p', '', 'who')
+  who.style.setProperty('--c', COLORS[o.lineage % COLORS.length])
+  who.append(silhouette(o.lineage), el('strong', `#${o.id}`), el('span', data.branches[o.lineage]))
+  const facts = el('dl')
+  for (const [label, id] of [['Status', 'o-status'], ['Age', 'o-age'], ['Energy', 'o-energy']]) {
+    const dd = el('dd')
+    dd.id = id
+    facts.append(el('dt', label), dd)
+  }
+  const parents = el('dd')
+  if (!o.parents) parents.textContent = 'Founding population, no recorded parents'
+  for (const id of o.parents ?? []) {
+    const button = el('button', `#${id}`, 'ghost')
+    button.type = 'button'
+    button.addEventListener('click', () => {
+      const parent = cur?.organisms.find((p) => p.id === id)
+      if (parent) return select(parent)
+      button.disabled = true
+      button.textContent = `#${id} is no longer alive`
+    })
+    parents.append(button)
+  }
+  facts.append(el('dt', 'Parents'), parents)
+  const genome = el('ul', '', 'genome')
+  for (const trait of TRAITS) {
+    const li = el('li')
+    const bar = el('i')
+    bar.style.width = `${100 * o.genome[trait]}%`
+    li.append(el('span', trait), bar, el('b', o.genome[trait].toFixed(2)))
+    genome.append(li)
+  }
+  box.replaceChildren(who, facts, el('h3', 'Genome · each trait from 0 to 1'), genome)
+  vitals()
+}
+
+// The parts of the organism panel that change from tick to tick.
+function vitals() {
+  if (!selected) return
+  const { o, died } = selected
+  const life = lifespanTicks(o.genome)
+  $('#o-status').textContent = died || (o.cooldown ? `Alive · can breed again in ${o.cooldown} ticks` : 'Alive')
+  $('#o-age').textContent = `${o.age} ticks · ${Math.round((100 * o.age) / life)}% of a ${Math.round(life)}-tick lifespan`
+  $('#o-energy').textContent = `${Math.max(0, o.energy).toFixed(0)} of ${maxEnergy(o.genome).toFixed(0)}`
+}
+
+scene.addEventListener('click', (e) => {
+  if (!tank || !cur) return
+  const px = (e.offsetX / scene.clientWidth) * W
+  const py = (e.offsetY / scene.clientHeight) * H
+  let best: Swimmer | undefined
+  let near = 30 // how close, in canvas units, a click must land
+  for (const s of drawn) {
+    const [x, y] = tank.project(s.x, s.y, s.z)
+    const d = Math.hypot(x - px, y - py)
+    if (d < near) { near = d; best = s }
+  }
+  select(cur.organisms.find((o) => o.id === best?.id) ?? null) // a click on open water clears the selection
+})
+
+// ---- Population chart ---------------------------------------------------------------------------
+
+let span = [0, 1] // ticks at the chart's left and right edges
+function chart() {
+  const last = samples[samples.length - 1]
+  if (!last) return
+  const start = samples[0].tick
+  const end = Math.max(last.tick, data.events[data.events.length - 1]?.tick ?? 0, start + 1)
+  span = [start, end]
+  const top = Math.max(20, 10 * Math.ceil(Math.max(...samples.flatMap((s) => s.pop)) / 10))
+  const x = (tick: number) => ((1000 * (tick - start)) / (end - start)).toFixed(1)
+  const lines = $('#lines').children
+  for (let i = 0; i < lines.length; i++) {
+    lines[i].setAttribute('points', samples.map((s) => `${x(s.tick)},${(100 - (100 * s.pop[i]) / top).toFixed(1)}`).join(' '))
+  }
+  let band = '' // one rectangle for each run of readings with a CI penalty
+  for (let i = 0; i < samples.length; i++) {
+    if (samples[i].stress <= 0 || (i && samples[i - 1].stress > 0)) continue
+    let j = i
+    while (j + 1 < samples.length && samples[j + 1].stress > 0) j++
+    band += `M${x(samples[i].tick)} 0H${x(samples[j].tick)}V100H${x(samples[i].tick)}Z`
+  }
+  $('#band').setAttribute('d', band)
+  $('#y-top').textContent = String(top)
+  $('#y-mid').textContent = String(top / 2)
+  $('#x-end').textContent = `tick ${end}`
+}
+
+const plot = $('#plot')
+plot.addEventListener('pointermove', (e) => {
+  if (!samples.length) return
+  const part = Math.min(1, Math.max(0, (e.clientX - plot.getBoundingClientRect().left) / plot.clientWidth))
+  const tick = span[0] + part * (span[1] - span[0])
+  const s = samples.reduce((a, b) => (Math.abs(b.tick - tick) < Math.abs(a.tick - tick) ? b : a))
+  const at = (s.tick - span[0]) / (span[1] - span[0])
+  const date = data.events.filter((ev) => ev.tick <= s.tick).pop()?.at.slice(0, 10)
+  const rows = el('dl')
+  data.branches.forEach((name, i) => {
+    const dt = el('dt', name)
+    dt.style.setProperty('--c', COLORS[i % COLORS.length])
+    rows.append(dt, el('dd', String(s.pop[i])))
+  })
+  rows.append(el('dt', 'All lineages', 'sum'), el('dd', String(s.pop.reduce((a, b) => a + b, 0))))
+  const tip = $('#tip')
+  tip.replaceChildren(el('strong', `Tick ${s.tick}${date ? ` · ${date}` : ''}`), rows, el('small', s.stress > 0 ? `CI penalty active · water stress ${Math.round(100 * s.stress)}%` : 'No CI penalty'))
+  tip.hidden = false
+  tip.style.left = at < 0.6 ? `${100 * at}%` : ''
+  tip.style.right = at < 0.6 ? '' : `${100 * (1 - at)}%`
+  $('#cross').setAttribute('x1', String(1000 * at))
+  $('#cross').setAttribute('x2', String(1000 * at))
+  $('#cross').style.visibility = 'visible'
+})
+plot.addEventListener('pointerleave', () => {
+  $('#tip').hidden = true
+  $('#cross').style.visibility = 'hidden'
+})
+
+// ---- Ecologist ----------------------------------------------------------------------------------
+
+function claims(title: string, list: Claim[]) {
+  const ul = el('ul')
+  for (const c of list) {
+    const li = el('li', c.text)
+    const refs = el('span', '', 'refs')
+    for (const ref of c.evidence.slice(0, 4)) { // each reference is a replayed record, linked to GitHub when it has a source
+      const e = data.events.find((ev) => key(ev) === ref)
+      if (!e) continue
+      const chip = e.url ? el('a') : el('span')
+      chip.textContent = `${KIND[e.kind]} ${e.id.slice(0, 7)}`
+      chip.title = e.title
+      if (chip instanceof HTMLAnchorElement) Object.assign(chip, { href: e.url, target: '_blank', rel: 'noopener' })
+      refs.append(chip)
+    }
+    if (c.evidence.length > 4) refs.append(el('span', `+${c.evidence.length - 4} more`))
+    if (refs.childElementCount) li.append(refs)
+    ul.append(li)
+  }
+  return [el('h3', title), ul]
+}
+
+async function ask(question: string) {
+  const context: Context = {
+    repo: data.repo, source: data.source, branches: data.branches, notices: data.notices,
+    events: data.events.slice(0, cur?.cursor ?? 0), samples: [...samples], focus,
+  }
+  let answer: Answer = explain(question, context)
+  let label = 'Rule-based explanation'
+  let note = 'No language model is configured, so fixed rules wrote this from the recorded readings.'
+  const summary = summarize(question, context)
+  try { // the optional model endpoint; without it, or on any failure, the rule-based answer stands
+    const res = await fetch('/api/explain', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(summary) })
+    const body = await res.json()
+    const parsed = res.ok ? parseAnswer(body.answer) : null
+    if (parsed && !unknownEvidence(parsed, summary.events.map((e) => e.ref)).length) {
+      answer = parsed
+      label = 'Model explanation'
+      note = `Written by ${String(body.model).slice(0, 60)} from a summary of the recorded readings. Every record it cites was checked against the dataset.`
+    } else if (parsed || res.status === 422) {
+      note = 'The model cited records that are not in this dataset, so its answer was discarded. Fixed rules wrote this instead.'
+    } else if (res.status !== 503) {
+      note = 'The model could not be reached, so fixed rules wrote this from the recorded readings.'
+    }
+  } catch { /* no endpoint here (static hosting or offline) */ }
+  const li = el('li', '', 'new')
+  const head = el('p', '', 'asked')
+  head.append(el('span', label, `badge ${label === 'Model explanation' ? 'model' : 'rules'}`), el('strong', question))
+  li.append(
+    head, el('small', note),
+    ...claims('Facts', answer.facts), ...claims('Applied rules', answer.rules),
+    el('h3', 'Interpretation'), el('p', answer.interpretation),
+    el('h3', 'Uncertainty'), (() => { const ul = el('ul'); ul.append(...answer.uncertainty.map((u) => el('li', u))); return ul })(),
+  )
+  $('#answers').prepend(li)
+  while ($('#answers').childElementCount > 5) $('#answers').lastElementChild!.remove()
+}
+
+$('#ask').addEventListener('submit', async (e) => {
+  e.preventDefault()
+  const input = $<HTMLInputElement>('#question')
+  const button = $<HTMLButtonElement>('#ask button')
+  button.disabled = true
+  await ask(input.value.trim() || input.placeholder)
+  button.disabled = false
+})
+$('#suggest').addEventListener('click', (e) => {
+  if (e.target instanceof HTMLButtonElement) ask(e.target.textContent ?? '')
+})
+
 // ---- The tank (every animation frame) -----------------------------------------------------------
 
 let anim = 0 // seconds of animation; stands still while paused
@@ -238,13 +480,15 @@ function frame(now: number) {
       ux: ux / len, uy: uy / len, uz: uz / len,
       energy: o.energy / maxEnergy(o.genome),
       grown: Math.min(1, age),
+      dim: focus !== null && o.lineage !== focus,
     }
   })
   const living = swimmers.length
+  drawn = swimmers.slice()
   fading = fading.filter((f) => now - f.at < 900)
   for (const { o, at } of fading) { // the dead lose their colour, shrink, and sink
     const k = (now - at) / 900
-    swimmers.push({ ...o, y: o.y - 45 * k, energy: 0, grown: 1 - k })
+    swimmers.push({ ...o, y: o.y - 45 * k, energy: 0, grown: 1 - k, dim: false })
   }
   tank.draw(swimmers, s.food, murk, anim)
 
@@ -253,6 +497,17 @@ function frame(now: number) {
   ctx.font = '500 10px "Martian Mono Variable", ui-monospace, monospace'
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
+  const followed = selected && !selected.died && drawn.find((f) => f.id === selected!.o.id)
+  if (followed) { // a ring that follows the inspected fish
+    const [x, y] = tank.project(followed.x, followed.y, followed.z)
+    ctx.strokeStyle = '#fff'
+    ctx.lineWidth = 1.5
+    ctx.beginPath()
+    ctx.arc(x, y, 20, 0, TAU)
+    ctx.stroke()
+    ctx.fillStyle = '#fff'
+    ctx.fillText(`#${followed.id}`, x, y - 30)
+  }
   for (let i = s.cursor - 1; i >= 0 && s.tick - data.events[i].tick < LINK_TICKS; i--) {
     const e = data.events[i]
     if (e.kind !== 'PR_OPENED' && e.kind !== 'PR_MERGED') continue

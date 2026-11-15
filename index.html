@@ -83,6 +83,7 @@
         </section>
       </aside>
     </main>
-    <script type="module" src="/src/main.ts"></script>
+    <!-- A plain file preview cannot run TypeScript; say so instead of showing an empty page. -->
+    <script type="module" src="/src/main.ts" onerror="document.getElementById('error').textContent = 'The app did not load. A plain file preview cannot run it: run pnpm dev in the project folder and open the address it prints.'"></script>
   </body>
 </html>

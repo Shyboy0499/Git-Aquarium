@@ -48,6 +48,11 @@ test('the ecosystem stays within its bounds and stays alive', () => {
   expect(s.deaths).toBeGreaterThan(0)
   expect(s.mutations).toBeGreaterThan(0)
   expect(s.organisms.length).toBe(P.startPopulation + s.births - s.deaths)
+  const sum = (key: 'born' | 'starved' | 'aged') => s.tally.reduce((n, t) => n + t[key], 0)
+  expect(sum('born')).toBe(s.births) // the per-lineage record accounts for every birth and death
+  expect(sum('starved') + sum('aged')).toBe(s.deaths)
+  expect(sum('starved')).toBeGreaterThan(0)
+  expect(sum('aged')).toBeGreaterThan(0)
 })
 
 test('mapping rules: commits and merges add bounded food, CI penalties are tracked per group', () => {

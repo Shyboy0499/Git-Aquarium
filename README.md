@@ -24,9 +24,9 @@ The timelapse is the built-in synthetic demo with seed 1: 67 fictional repositor
 
 How to read the tank:
 
-- **Body colour** is the lineage, one per observed branch. Fish of a lineage school together, and each fish's own `hue` gene shifts its shade slightly.
+- **Species and colour** are the lineage, one per observed branch: each branch is its own kind of fish (a reef fish, a slim dart, a tall disc, a fantail), shown beside its name in the legend. Fish of a lineage school together, and each fish's own `hue` gene shifts its shade slightly. With more than four branches the four shapes repeat in new colours.
 - **A pale, washed-out fish** is a hungry one; colour returns as it feeds.
-- **Size, fin size, and tail-beat speed** come from each fish's genes.
+- **Size, slimness, fin size, and tail-beat speed** come from each fish's genes: faster swimmers are slimmer and beat their tails faster.
 - **Yellow pellets** are food. Commits and merges add it; a small baseline supply never stops.
 - **Murky green water** means a CI workflow is failing, or the tank is still recovering from one that was.
 - **A dashed arc** joins a fish from each lineage when a pull request opens between their branches; **a solid arc** marks a merge.
@@ -169,7 +169,7 @@ flowchart TD
 - `src/sim.ts`: the simulation and the mapping rules, in three dimensions. Fish turn gradually, cruise level, and school with their own lineage. It has no dependencies and runs in a Web Worker (`src/worker.ts`).
 - `src/dataset.ts`: validates, deduplicates, and freezes repository records, and imports one public repository.
 - `src/demo.ts`: the fictional demo history.
-- `src/tank.ts`: the 3D scene: sunlight with shadows, rippling light on the sand, depth haze, and fish, plants, and rocks modelled in code, so there are no downloaded art assets. It needs WebGL; without it the measurements and event log still work.
+- `src/tank.ts`: the 3D scene: sunlight with shadows, rippling light on the sand, depth haze, and four fish species, plants, and rocks modelled in code, so there are no downloaded art assets. It needs WebGL; without it the measurements and event log still work.
 - `src/main.ts` and `src/style.css`: the page, controls, and event log. Motion is blended between simulation ticks at display frame rate. The two typefaces (Fraunces and Martian Mono) are bundled at build time, so the page still loads nothing from the network.
 
 The import calls GitHub's public REST API directly from the browser, so there is no server and no token. That limits it to GitHub's unauthenticated quota of 60 requests per hour (four per import) and to the 100 most recent commits, pull requests, and workflow runs; whatever is cut off is listed on screen. React, PixiJS, the workspace split, Fastify, Zod, and IndexedDB will be introduced when a later milestone needs them.

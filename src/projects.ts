@@ -30,10 +30,12 @@ export interface Project {
   created: string
   pushed: string
   archived: boolean
-  prs: { total: number; recent: Pull[] } // total is at least this many; recent is the latest 100
-  issues: { total: number; recent: Issue[] }
+  // `recent` is the latest 100. When `exact` is false the total is not a count: for pull requests it is
+  // rounded up to a whole page ("about"), and for issues it is an upper limit ("up to").
+  prs: { total: number; exact: boolean; recent: Pull[] }
+  issues: { total: number; exact: boolean; recent: Issue[] }
   activity: number // 0..1, how much landed in the last 90 days
-  size: number // 0.65..1.2, the fish's length
+  size: number // 0.65..1.2, the fish's length, from the pull request total
   lifecycle: Lifecycle
   quietDays: number
 }
@@ -77,19 +79,22 @@ export function parseRepos(input: string): string[] {
   return out
 }
 
-// GitHub's Link header names the last page, not the item count: the total is a lower bound.
+// GitHub's Link header names the last page, not the item count, so a total read from it is the count
+// rounded up to a whole page: right to within one page.
 export function parseLastPage(link: string | null): number {
   const match = link ? /[?&]page=(\d+)>;\s*rel="last"/.exec(link) : null
   return match ? Number(match[1]) : 0
 }
 
+// Log scale up to 32,767 pull requests, so that 300 and 20,000 are both visible and still look different.
 export function sizeOf(total: number): number {
-  const capped = Math.max(0, Math.min(256, total))
-  return 0.65 + (0.55 * Math.log2(1 + capped)) / Math.log2(257)
+  const capped = Math.max(0, Math.min(32_767, total))
+  return 0.65 + (0.55 * Math.log2(1 + capped)) / 15
 }
 
 export function lifecycleOf(meta: { archived: boolean; pushed_at: string }, now: number): { lifecycle: Lifecycle; quietDays: number } {
-  const quietDays = Math.max(0, Math.floor((now - Date.parse(meta.pushed_at)) / DAY))
+  const pushed = Date.parse(meta.pushed_at)
+  const quietDays = Number.isFinite(pushed) ? Math.max(0, Math.floor((now - pushed) / DAY)) : 0
   if (meta.archived || quietDays > 365) return { lifecycle: 'abandoned', quietDays }
   if (quietDays > 90) return { lifecycle: 'quiet', quietDays }
   return { lifecycle: 'active', quietDays }
@@ -146,12 +151,26 @@ function toIssue(raw: Json): Issue | null {
   }
 }
 
-export function readProject(repo: string, meta: Json, pulls: Json[], issues: Json[], now: number): Project {
+// `pullPages` is the last page number GitHub reported for the pull request list, or 0 when it fitted on one page.
+// `issueCount` is the exact number of issues from GitHub's search, when that request was allowed.
+export function readProject(
+  repo: string, meta: Json, pulls: Json[], issues: Json[], now: number, pullPages = 0, issueCount?: number,
+): Project {
   const { lifecycle, quietDays } = lifecycleOf({ archived: meta.archived === true, pushed_at: text(meta.pushed_at, 32) }, now)
   const recentPulls = list(pulls).map(toPull)
   const recentIssues = list(issues).map(toIssue).filter((i): i is Issue => i !== null)
   const cutoff = now - 90 * DAY
   const fresh = recentPulls.filter((p) => Date.parse(p.at) >= cutoff).length + recentIssues.filter((i) => Date.parse(i.at) >= cutoff).length
+  // Pull requests: an exact count if they fitted on one page, otherwise the page count times the page size.
+  const prTotal = pullPages > 1 ? pullPages * PAGE : recentPulls.length
+  // Issues: GitHub gives no page count for this list, so the exact count comes from search. Without it, and
+  // when the list was cut off, only a limit is known: issues, pull requests, and discussions share one number
+  // sequence, so there cannot be more issues than the highest number seen less the pull requests.
+  const counted = issueCount !== undefined && Number.isFinite(issueCount)
+  const cutOff = list(issues).length >= PAGE
+  const highest = Math.max(0, ...list(issues).map((i) => Number(i.number) || 0), ...recentPulls.map((p) => p.number))
+  const limit = Math.max(recentIssues.length, Math.ceil((highest - prTotal + PAGE) / PAGE) * PAGE) // the pull requests were rounded up
+  const issueTotal = counted ? issueCount : cutOff ? limit : recentIssues.length
   return {
     repo,
     name: text(meta.name, 60) || repo.split('/')[1],
@@ -160,10 +179,10 @@ export function readProject(repo: string, meta: Json, pulls: Json[], issues: Jso
     created: text(meta.created_at, 32),
     pushed: text(meta.pushed_at, 32),
     archived: meta.archived === true,
-    prs: { total: recentPulls.length, recent: recentPulls },
-    issues: { total: recentIssues.length, recent: recentIssues },
+    prs: { total: prTotal, exact: pullPages <= 1, recent: recentPulls },
+    issues: { total: issueTotal, exact: counted || !cutOff, recent: recentIssues },
     activity: Math.max(0.2, Math.min(1, 0.2 + 0.8 * Math.min(1, fresh / 30))),
-    size: sizeOf(recentPulls.length),
+    size: sizeOf(prTotal),
     lifecycle,
     quietDays,
   }
@@ -171,7 +190,7 @@ export function readProject(repo: string, meta: Json, pulls: Json[], issues: Jso
 
 interface Reply {
   body: unknown
-  total: number
+  pages: number // the last page GitHub named, or 0 when there is only one
 }
 
 async function get(path: string): Promise<Reply> {
@@ -181,49 +200,52 @@ async function get(path: string): Promise<Reply> {
   if (res.status === 404) throw new Error('not found, or it is private')
   if (res.status === 403 || res.status === 429) throw new Error('GitHub rate limit reached (60 requests per hour without a token)')
   if (!res.ok) throw new Error(`GitHub returned ${res.status}.`)
-  const body: unknown = await res.json()
-  const last = parseLastPage(res.headers.get('link'))
-  const total = last ? last * PAGE : Array.isArray(body) ? body.length : 0
-  return { body, total }
+  return { body: await res.json(), pages: parseLastPage(res.headers.get('link')) }
 }
 
 async function read(repo: string, now: number): Promise<Project> {
-  const [meta, pulls, issues] = await Promise.all([
+  const [meta, pulls, issues, counted] = await Promise.all([
     get(`/repos/${repo}`),
     get(`/repos/${repo}/pulls?state=all&per_page=${PAGE}&sort=created&direction=desc`),
     get(`/repos/${repo}/issues?state=all&per_page=${PAGE}&sort=created&direction=desc`),
+    // Search has its own, smaller allowance (ten a minute without a token), so a refusal here is not an error.
+    get(`/search/issues?q=${encodeURIComponent(`repo:${repo} is:issue`)}&per_page=1`).catch(() => null),
   ])
-  const project = readProject(repo, obj(meta.body), list(pulls.body), list(issues.body), now)
-  project.prs.total = Math.max(project.prs.recent.length, pulls.total)
-  project.issues.total = Math.max(project.issues.recent.length, issues.total)
-  project.size = sizeOf(project.prs.total)
-  return project
+  const total = obj(counted?.body).total_count
+  return readProject(repo, obj(meta.body), list(pulls.body), list(issues.body), now, pulls.pages,
+    typeof total === 'number' ? total : undefined)
 }
 
 // At most three repositories are in flight at once: unauthenticated GitHub allows 60 requests an hour.
 export async function fetchProjects(input: string, now = Date.now()): Promise<ProjectSet> {
   const repos = parseRepos(input)
-  const projects: Project[] = []
   const notices: string[] = []
-  const queue = [...repos]
-  const failed: string[] = []
+  const slots: (Project | string)[] = [] // by input position, so the tank's order does not depend on which reply came first
+  let next = 0
   const worker = async () => {
-    for (let repo = queue.shift(); repo; repo = queue.shift()) {
+    for (let i = next++; i < repos.length; i = next++) {
       try {
-        projects.push(await read(repo, now))
+        slots[i] = await read(repos[i], now)
       } catch (err) {
-        failed.push(`${repo}: ${(err as Error).message}`)
+        slots[i] = `${repos[i]}: ${(err as Error).message}`
       }
     }
   }
   await Promise.all([worker(), worker(), worker()])
-  for (const f of failed) notices.push(f)
+  const projects = slots.filter((s): s is Project => typeof s !== 'string')
+  const failed = slots.filter((s): s is string => typeof s === 'string')
+  notices.push(...failed)
   if (!projects.length) throw new Error(failed[0] ?? 'No repositories were read.')
-  if (projects.some((p) => p.prs.total > PAGE || p.issues.total > PAGE || p.prs.recent.length === PAGE || p.issues.recent.length === PAGE)) {
-    notices.push('Only the latest 100 pull requests and issues per project were read. Counts marked + are at least that large.')
+  if (projects.some((p) => !p.prs.exact || !p.issues.exact)) {
+    notices.push('Only the latest 100 pull requests and issues of each project are drawn, and the merged, open, and closed splits cover those only.')
+  }
+  if (projects.some((p) => !p.prs.exact)) {
+    notices.push('Pull request totals marked "about" come from GitHub\'s page count, so they are rounded up to the next hundred.')
+  }
+  if (projects.some((p) => !p.issues.exact)) {
+    notices.push('Issue totals marked "up to" are a limit, not a count: GitHub\'s search, which gives the exact number, allows ten requests a minute and refused. The limit is the highest issue number less the pull requests; discussions share that numbering, so the true count can be much lower.')
   }
   notices.push('Bones are pull requests, scales are issues, and a repository is not a living thing: this mapping is a design choice, not a measurement of the code.')
-  notices.push('Loading costs three GitHub requests per project; without a token GitHub allows 60 an hour.')
-  notices.push('Merged, open, and closed splits cover the latest 100 pull requests; the total is a lower bound from GitHub\'s page count.')
+  notices.push('Loading costs three GitHub requests per project, and one search request for its issue count; without a token GitHub allows 60 an hour and ten searches a minute.')
   return { projects, notices, at: new Date(now).toISOString() }
 }

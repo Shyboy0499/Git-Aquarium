@@ -39,16 +39,19 @@ function waving<T extends THREE.Material>(material: T, sway = false) {
   return material
 }
 
-const skinMaterial = waving(new THREE.MeshStandardMaterial({
-  color: '#6fb6c9', transparent: true, opacity: 0.68, roughness: 0.22, metalness: 0.08,
-  side: THREE.DoubleSide, depthWrite: false,
+const skin = (color: string, roughness: number) => waving(new THREE.MeshStandardMaterial({
+  color, transparent: true, opacity: 0.68, roughness, metalness: 0.08, side: THREE.DoubleSide, depthWrite: false,
 }))
+const skinMaterial = skin('#6fb6c9', 0.22)
+const quietSkin = skin('#87969a', 0.8) // a project nobody has pushed to for 90 days: grey and dull
 const spineMaterial = waving(new THREE.MeshStandardMaterial({ color: SPINE, roughness: 0.5, metalness: 0.1 }))
 const ribsMaterial = (color: string) => waving(new THREE.MeshStandardMaterial({ color, roughness: 0.45, metalness: 0.2 }))
 const ribs = { merged: ribsMaterial(MERGED), open: ribsMaterial(OPEN), closed: ribsMaterial(CLOSED) }
 const scalesMaterial = (color: string) => waving(new THREE.MeshStandardMaterial({ color, roughness: 0.35, metalness: 0.35, side: THREE.DoubleSide }))
 const scales = { closed: scalesMaterial(SCALE), open: scalesMaterial(GAP), question: scalesMaterial(QUESTION) }
 const eyeMaterial = new THREE.MeshStandardMaterial({ color: EYE, roughness: 0.2 })
+const rockMaterial = new THREE.MeshStandardMaterial({ color: '#7c7568', roughness: 0.95 })
+const weedMaterial = waving(new THREE.MeshStandardMaterial({ color: '#3f7d5a', roughness: 0.9, side: THREE.DoubleSide }), true)
 
 // Half-height of the body at a normalized position along it, from nose (+1) to tail (-1).
 function girth(u: number) {
@@ -87,8 +90,8 @@ function buildFish(p: Project): THREE.Group {
     new THREE.Vector2(-1.32, -0.4), new THREE.Vector2(-0.92, -0.16),
   ]))
   tail.scale(size, size, size)
-  const skin = merged([body, tail], skinMaterial)
-  if (skin) group.add(skin)
+  const coat = merged([body, tail], p.lifecycle === 'quiet' ? quietSkin : skinMaterial)
+  if (coat) group.add(coat)
 
   const spine = new THREE.CatmullRomCurve3([
     new THREE.Vector3(-1.04 * half, 0.03 * height, 0),
@@ -143,9 +146,51 @@ function buildFish(p: Project): THREE.Group {
   return group
 }
 
-// Every project is a fish while it is maintained; abandoned forms arrive in P5.
+function buildRock(p: Project): THREE.Group {
+  const size = 0.45 + 0.35 * p.size
+  const rock = new THREE.SphereGeometry(1, 20, 14)
+  const position = rock.attributes.position
+  for (let i = 0; i < position.count; i++) {
+    const x = position.getX(i), y = position.getY(i), z = position.getZ(i)
+    const k = 1 + 0.16 * Math.sin(x * 3.1) * Math.sin(y * 2.7) + 0.1 * Math.sin(z * 4.2 + x * 1.7)
+    position.setXYZ(i, x * k, y * k, z * k)
+  }
+  rock.computeVertexNormals()
+  rock.scale(size, size * 0.62, size * 0.9)
+  rock.translate(0, size * 0.3, 0)
+  const group = new THREE.Group()
+  const mesh = new THREE.Mesh(rock, rockMaterial)
+  mesh.castShadow = mesh.receiveShadow = true
+  group.add(mesh)
+  return group
+}
+
+function buildSeaweed(p: Project): THREE.Group {
+  const blades: THREE.BufferGeometry[] = []
+  for (let i = 0; i < 5; i++) {
+    const blade = new THREE.PlaneGeometry(0.14 + 0.06 * p.size, 1.3, 1, 8)
+    const position = blade.attributes.position
+    for (let j = 0; j < position.count; j++) {
+      const y = position.getY(j) + 0.65 // base at zero, tips up
+      position.setX(j, position.getX(j) * (1 - 0.8 * y / 1.3))
+      position.setY(j, y)
+    }
+    blade.rotateY(i * 1.27)
+    blade.rotateZ((i - 2) * 0.1)
+    blade.translate(Math.sin(i * 2.1) * 0.18, 0, Math.cos(i * 2.1) * 0.18)
+    blades.push(blade)
+  }
+  const group = new THREE.Group()
+  const mesh = merged(blades, weedMaterial, true)
+  if (mesh) group.add(mesh)
+  return group
+}
+
+// Archived repositories become rocks, long-silent ones become seaweed; everything else is a fish.
 export function buildProject(p: Project): ProjectShape {
-  return { id: p.repo, shape: 'fish', group: buildFish(p) }
+  const shape: Shape = p.lifecycle === 'abandoned' ? (p.archived ? 'rock' : 'seaweed') : 'fish'
+  const group = shape === 'fish' ? buildFish(p) : shape === 'rock' ? buildRock(p) : buildSeaweed(p)
+  return { id: p.repo, shape, group }
 }
 
 export function disposeProject(group: THREE.Group) {

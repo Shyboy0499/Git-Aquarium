@@ -482,14 +482,17 @@ $('#suggest').addEventListener('click', (e) => {
 
 // ---- Projects mode: one repository per body -----------------------------------------------------
 
+// A total, with a word in front when it is not an exact count: "about" for pull requests, "up to" for issues.
+const count = (c: { total: number; exact: boolean }, inexact: string) => `${c.exact ? '' : `${inexact} `}${c.total.toLocaleString('en-US')}`
+const sum = (parts: { total: number; exact: boolean }[], inexact: string) =>
+  count({ total: parts.reduce((n, c) => n + c.total, 0), exact: parts.every((c) => c.exact) }, inexact)
+
 function readout() {
   if (!projects) return
   const by = (k: string) => projects!.projects.filter((p) => p.lifecycle === k).length
-  const prs = projects.projects.reduce((n, p) => n + p.prs.total, 0)
-  const issues = projects.projects.reduce((n, p) => n + p.issues.total, 0)
   $('#preadout').textContent =
     `${projects.projects.length} projects · ${by('active')} active · ${by('quiet')} quiet · ${by('abandoned')} abandoned · ` +
-    `${prs.toLocaleString('en-US')} PRs · ${issues.toLocaleString('en-US')} issues`
+    `${sum(projects.projects.map((p) => p.prs), 'about')} PRs · ${sum(projects.projects.map((p) => p.issues), 'up to')} issues`
   const notices = $<HTMLDetailsElement>('#pnotices')
   notices.open = true
   notices.firstElementChild!.textContent = `Data boundaries (${projects.notices.length})`
@@ -505,7 +508,7 @@ function projectLegend() {
     button.dataset.repo = p.repo
     button.title = 'Inspect this project'
     button.setAttribute('aria-pressed', String(picked?.id === p.repo))
-    button.append(el('span', p.repo), el('b', `${p.prs.total} PR`), el('u', p.lifecycle))
+    button.append(el('span', p.repo), el('b', `${count(p.prs, 'about')} PRs`), el('u', p.lifecycle))
     button.addEventListener('click', () => selectProject(agents.find((a) => a.id === p.repo) ?? null))
     li.append(button)
     return li
@@ -533,18 +536,15 @@ function selectProject(a: Agent | null) {
   }
   const since = Date.parse(p.created)
   const years = Number.isFinite(since) ? (Date.now() - since) / 31_557_600_000 : 0
-  const projectLink = document.createElement('a')
-  projectLink.href = p.url
-  projectLink.target = '_blank'
-  projectLink.rel = 'noopener'
-  projectLink.textContent = p.repo
+  const projectLink = el(p.url ? 'a' : 'span', p.repo) // no link unless GitHub gave a github.com address
+  if (projectLink instanceof HTMLAnchorElement) Object.assign(projectLink, { href: p.url, target: '_blank', rel: 'noopener' })
   row('Project', projectLink)
   row('Theme', p.theme)
   row('Age', `${p.created.slice(0, 10)} · ${years.toFixed(1)} years old`)
   row('Upkeep', `last push ${p.pushed.slice(0, 10)} · ${p.quietDays} days quiet · ${Math.round(p.activity * 100)}% recent activity`)
   row('Lifecycle', p.lifecycle)
-  row('Bones', `${p.prs.total} pull requests · ${pulls.merged} merged · ${pulls.open} open · ${pulls.closed} closed in the latest ${p.prs.recent.length}`)
-  row('Scales', `${p.issues.total} issues · ${issues.open} open · ${issues.question} marked question in the latest ${p.issues.recent.length}`)
+  row('Bones', `${count(p.prs, 'about')} pull requests · ${pulls.merged} merged · ${pulls.open} open · ${pulls.closed} closed in the latest ${p.prs.recent.length}`)
+  row('Scales', `${count(p.issues, 'up to')} issues · ${issues.open} open · ${issues.question} marked question in the latest ${p.issues.recent.length}`)
   const recent = el('ol', '', 'recent')
   for (const pr of p.prs.recent.slice(0, 5)) {
     const li = el('li')
@@ -604,23 +604,26 @@ function frame(now: number) {
   lastFrame = now
   if (!tank) return
   if (mode === 'projects') {
-    if (projects && running) anim += dt
-    if (projects) drift(agents, dt, anim)
+    if (projects) { // this view has no replay to pause, so it always moves
+      anim += dt
+      drift(agents, dt, anim)
+    }
     const items: ProjectDraw[] = agents.map((a) => ({ id: a.id, project: a.project, x: a.x, y: a.y, z: a.z, yaw: a.yaw }))
     tank.drawProjects(items, anim, projectRev)
     ctx.clearRect(0, 0, W, H)
     ctx.font = '500 10px "Martian Mono Variable", ui-monospace, monospace'
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
-    if (picked) {
-      const [x, y] = tank.projectScene(picked.x, picked.y, picked.z)
-      ctx.strokeStyle = '#fff'
-      ctx.lineWidth = 1.5
+    // Every body carries its repository's name, or a rock could not be told from the scenery.
+    for (const a of agents) {
+      const [x, y] = tank.projectScene(a.x, a.y + (a.still ? 0.95 : -0.5 * a.project.size), a.z)
+      const width = ctx.measureText(a.project.name).width + 14
+      ctx.fillStyle = a === picked ? '#fff' : 'rgba(6, 22, 34, 0.72)'
       ctx.beginPath()
-      ctx.arc(x, y, 26, 0, TAU)
-      ctx.stroke()
-      ctx.fillStyle = '#fff'
-      ctx.fillText(picked.project.name, x, y - 34)
+      ctx.roundRect(x - width / 2, y - 8, width, 16, 8)
+      ctx.fill()
+      ctx.fillStyle = a === picked ? '#06141f' : '#e6eef0'
+      ctx.fillText(a.project.name, x, y + 0.5)
     }
     return
   }

@@ -17,22 +17,23 @@ export interface Agent {
   still: boolean // rocks and seaweed do not swim
 }
 
-const TANK = { x: 3.1, yMin: 0.75, yMax: 3.4, zMin: -4.9, zMax: -1.3 }
+// The open water in front of the scenery: fish stay clear of the rocks and plants behind it.
+const TANK = { x: 3.3, yMin: 1.2, yMax: 3.5, zMin: -1.9, zMax: 0.5 }
 const FLOOR = -0.15
 
 // A deterministic layout: the same projects always start in the same places.
 export function placeProjects(projects: Project[]): Agent[] {
   return projects.map((project, i) => {
-    // Abandoned forms arrive in P5; every project swims as a fish until then.
-    const kind: Kind = 'fish'
+    const kind: Kind = project.lifecycle === 'abandoned' ? (project.archived ? 'rock' : 'seaweed') : 'fish'
     const angle = (i / Math.max(1, projects.length)) * Math.PI * 2
     return {
       id: project.repo,
       project,
       kind,
-      x: kind === 'fish' ? Math.sin(angle) * 2.2 : Math.sin(angle) * 2.9,
-      y: kind === 'fish' ? 1.0 + 1.9 * ((i * 13) % 7) / 6 : FLOOR,
-      z: kind === 'fish' ? -2.2 - 0.5 * ((i * 7) % 5) : -4.2 + 0.6 * ((i * 3) % 5),
+      x: kind === 'fish' ? Math.sin(angle) * 2.2 : Math.sin(angle + 0.6) * 3.1,
+      y: kind === 'fish' ? TANK.yMin + (TANK.yMax - TANK.yMin) * ((i * 13) % 7) / 6 : FLOOR,
+      // rocks and seaweed sit on the open sand at the front, where they cannot be mistaken for scenery
+      z: kind === 'fish' ? TANK.zMin + (TANK.zMax - TANK.zMin) * ((i * 7) % 5) / 4 : 1.1 + 0.5 * ((i * 3) % 3),
       yaw: kind === 'fish' ? (i % 2 ? 0.12 : Math.PI - 0.12) : angle,
       speed: project.activity,
       phase: i * 1.7,
@@ -50,7 +51,8 @@ export function drift(agents: Agent[], dt: number, time: number) {
       continue
     }
     const wiggle = Math.sin(time * 0.9 + a.phase)
-    a.yaw += (0.35 * wiggle - 0.2 * (a.x / TANK.x)) * dt * (0.6 + 0.6 * a.speed)
+    // wander, lean back toward the middle, and ease back to side-on: a body seen end-on shows none of its bones
+    a.yaw += (0.35 * wiggle - 0.2 * (a.x / TANK.x) - 0.6 * Math.sin(2 * a.yaw)) * dt * (0.6 + 0.6 * a.speed)
     const speed = 0.22 + 0.55 * a.speed
     a.x += Math.cos(a.yaw) * speed * dt
     a.z += Math.sin(a.yaw) * speed * 0.55 * dt
@@ -71,7 +73,7 @@ export function drift(agents: Agent[], dt: number, time: number) {
       if (b.still) continue
       const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z
       const d = Math.hypot(dx, dy, dz)
-      const least = 1.4 * (a.project.size + b.project.size)
+      const least = 0.85 * (a.project.size + b.project.size) // a body is about 1.7 sizes long, tail included
       if (d > 0 && d < least) {
         const push = (least - d) / d / 2
         a.x -= dx * push

@@ -324,11 +324,14 @@ h3 { margin: 14px 0 6px; color: var(--dim); }
 
 .tabs { display: flex; gap: 6px; margin-top: 14px; }
 .tabs button { padding: 6px 12px; }
-.tabs button[aria-pressed='true'] { background: var(--glow); border-color: var(--glow); color: var(--abyss); }
-body[data-mode='ecosystem'] .projects-only { display: none; }
-body[data-mode='projects'] .eco-only { display: none; }
+.tabs button[aria-pressed='false'] { color: var(--ink); background: none; border-color: var(--line); }
+.tabs button[aria-pressed='false']:hover { color: var(--glow); border-color: var(--glow); }
+/* !important: some of these elements set their own display by id, which would otherwise win */
+body[data-mode='ecosystem'] .projects-only { display: none !important; }
+body[data-mode='projects'] .eco-only { display: none !important; }
 
 #projects { animation: rise 0.7s 0.1s both; }
+#prepos { flex: 1; min-width: 0; padding: 10px 6px 10px 16px; }
 #preadout { margin-top: 10px; color: var(--dim); font: 400 11.5px/1.5 var(--mono); letter-spacing: 0; text-transform: none; }
 #pnotices { margin-top: 12px; color: var(--dim); font-size: 13.5px; }
 #pnotices summary { cursor: pointer; font: 500 10.5px var(--mono); letter-spacing: 0.08em; text-transform: uppercase; }

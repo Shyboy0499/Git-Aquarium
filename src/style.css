@@ -199,8 +199,8 @@ dt { color: var(--dim); }
 #notices summary { cursor: pointer; font: 500 10.5px var(--mono); letter-spacing: 0.08em; text-transform: uppercase; }
 #notices li { margin-top: 6px; padding-left: 12px; border-left: 1px solid var(--line); }
 
-#legend { display: grid; gap: 2px; }
-#legend button { /* each row filters the tank and chart to its lineage */
+:is(#legend, #pulllegend) { display: grid; gap: 2px; }
+:is(#legend, #pulllegend) button { /* each row filters the tank and chart to its lineage */
   all: unset;
   box-sizing: border-box;
   display: grid;
@@ -214,16 +214,16 @@ dt { color: var(--dim); }
   cursor: pointer;
   transition: opacity 0.2s, background 0.2s;
 }
-#legend { margin: 0 -8px; }
-#legend button:hover { background: rgba(255, 255, 255, 0.05); }
-#legend button:focus-visible { outline: 2px solid var(--glow); outline-offset: 2px; }
-#legend button[aria-pressed='true'] { background: rgba(169, 214, 208, 0.12); }
-#legend.filtered button[aria-pressed='false'] { opacity: 0.45; }
-#legend .stressed span::after { content: ' · CI penalty'; color: var(--tide); } /* this branch's CI is failing or still recovering */
-#legend svg { width: 24px; height: 16px; fill: var(--c); } /* the lineage's species, in its colour */
-#legend span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#legend b { font: 400 18px/1 var(--serif); font-variant-numeric: tabular-nums; }
-#legend u { grid-column: 2 / 4; height: 2px; margin-top: -4px; background: var(--c); transition: width 0.4s; }
+:is(#legend, #pulllegend) { margin: 0 -8px; }
+:is(#legend, #pulllegend) button:hover { background: rgba(255, 255, 255, 0.05); }
+:is(#legend, #pulllegend) button:focus-visible { outline: 2px solid var(--glow); outline-offset: 2px; }
+:is(#legend, #pulllegend) button[aria-pressed='true'] { background: rgba(169, 214, 208, 0.12); }
+:is(#legend, #pulllegend).filtered button[aria-pressed='false'] { opacity: 0.45; }
+:is(#legend, #pulllegend) .stressed span::after { content: ' · CI penalty'; color: var(--tide); } /* this branch's CI is failing or still recovering */
+:is(#legend, #pulllegend) svg { width: 24px; height: 16px; fill: var(--c); } /* the lineage's species, in its colour */
+:is(#legend, #pulllegend) span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:is(#legend, #pulllegend) b { font: 400 18px/1 var(--serif); font-variant-numeric: tabular-nums; }
+:is(#legend, #pulllegend) u { grid-column: 2 / 4; height: 2px; margin-top: -4px; background: var(--c); transition: width 0.4s; }
 
 #log { display: grid; gap: 12px; }
 #log li { position: relative; padding-left: 16px; }
@@ -327,15 +327,16 @@ h3 { margin: 14px 0 6px; color: var(--dim); }
 .tabs button[aria-pressed='false'] { color: var(--ink); background: none; border-color: var(--line); }
 .tabs button[aria-pressed='false']:hover { color: var(--glow); border-color: var(--glow); }
 /* !important: some of these elements set their own display by id, which would otherwise win */
-body[data-mode='ecosystem'] .projects-only { display: none !important; }
-body[data-mode='projects'] .eco-only { display: none !important; }
+body:not([data-mode='ecosystem']) .eco-only,
+body:not([data-mode='projects']) .projects-only,
+body:not([data-mode='pulls']) .pulls-only { display: none !important; }
 
 #projects { animation: rise 0.7s 0.1s both; }
-#prepos { flex: 1; min-width: 0; padding: 10px 6px 10px 16px; }
-#preadout { margin-top: 10px; color: var(--dim); font: 400 11.5px/1.5 var(--mono); letter-spacing: 0; text-transform: none; }
-#pnotices { margin-top: 12px; color: var(--dim); font-size: 13.5px; }
-#pnotices summary { cursor: pointer; font: 500 10.5px var(--mono); letter-spacing: 0.08em; text-transform: uppercase; }
-#pnotices li { margin-top: 6px; padding-left: 12px; border-left: 1px solid var(--line); }
+#prepos, #pullrepo { flex: 1; min-width: 0; padding: 10px 6px 10px 16px; }
+#preadout, #pullreadout { margin-top: 10px; color: var(--dim); font: 400 11.5px/1.5 var(--mono); letter-spacing: 0; text-transform: none; }
+#pnotices, #pullnotices { margin-top: 12px; color: var(--dim); font-size: 13.5px; }
+#pnotices summary, #pullnotices summary { cursor: pointer; font: 500 10.5px var(--mono); letter-spacing: 0.08em; text-transform: uppercase; }
+#pnotices li, #pullnotices li { margin-top: 6px; padding-left: 12px; border-left: 1px solid var(--line); }
 
 #plegend { display: grid; gap: 2px; margin: 0 -8px; }
 #plegend button {
@@ -358,11 +359,19 @@ body[data-mode='projects'] .eco-only { display: none !important; }
 #plegend b { color: var(--dim); font-weight: 400; }
 #plegend u { color: var(--dim); text-decoration: none; }
 
-#project dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 14px; margin-top: 12px; font-size: 14px; }
-#project dt { padding-top: 3px; }
+#project dl, #pull dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 14px; margin-top: 12px; font-size: 14px; }
+#project dt, #pull dt { padding-top: 3px; }
 #project .recent { display: grid; gap: 6px; margin-top: 10px; font-size: 13.5px; }
 #project .recent small { color: var(--dim); }
 #project .recent a { overflow-wrap: anywhere; }
+
+#pulls { animation: rise 0.7s 0.1s both; }
+.key { margin-top: 6px; color: var(--dim); font-style: italic; font-size: 13.5px; }
+#pull .who a { color: var(--ink); }
+#pull .title { margin-top: 8px; font-size: 16px; overflow-wrap: anywhere; }
+#pull .bad { color: var(--tide); }
+#pull .good { color: var(--glow); }
+#project .dive { margin-top: 14px; }
 
 @keyframes rise { from { opacity: 0; transform: translateY(14px); } }
 @keyframes surface { from { opacity: 0; transform: translateX(10px); } }

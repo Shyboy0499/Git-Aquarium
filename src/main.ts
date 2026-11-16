@@ -9,6 +9,8 @@ import { P, RULES, TRAITS, hashState, lifespanTicks, maxEnergy, type EventKind, 
 import { COLORS, createTank, silhouette, type ProjectDraw, type Swimmer } from './tank'
 import { DEFAULT_REPOS, countIssues, countPulls, fetchProjects, type Project, type ProjectSet } from './projects'
 import { drift, placeProjects, type Agent } from './fishschool'
+import { STALE_DAYS, demoPulls, fetchPulls, sizeOfDiff, tally, type PullSet } from './pulls'
+import { placePulls, swim, type Swim } from './pullschool'
 import type { Command } from './worker'
 
 const $ = <T extends HTMLElement>(selector: string) => document.querySelector<T>(selector)!
@@ -64,11 +66,19 @@ let drawn: Swimmer[] = [] // the living fish as last drawn, for picking with a c
 
 // ---- Projects mode ------------------------------------------------------------------------------
 
-let mode: 'ecosystem' | 'projects' = 'ecosystem'
+type Mode = 'ecosystem' | 'projects' | 'pulls'
+let mode: Mode = 'ecosystem'
 let projects: ProjectSet | null = null
 let agents: Agent[] = []
 let picked: Agent | null = null
 let projectRev = 0 // bumped when the data changes, so the tank rebuilds its meshes once
+
+// ---- Pull requests mode -------------------------------------------------------------------------
+
+let pullSet: PullSet | null = null
+let shoal: Swim[] = []
+let pullPicked: Swim | null = null
+let pullFocus: number | null = null // author filter
 
 const worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' })
 const send = (c: Command) => worker.postMessage(c)
@@ -339,6 +349,17 @@ scene.addEventListener('click', (e) => {
     selectProject(best ?? null)
     return
   }
+  if (mode === 'pulls') {
+    let best: Swim | undefined
+    let near = 30
+    for (const f of shoal) {
+      const [x, y] = tank.project(f.x, f.y, f.z)
+      const d = Math.hypot(x - px, y - py)
+      if (d < near) { near = d; best = f }
+    }
+    selectPull(best ?? null)
+    return
+  }
   if (!cur) return
   let best: Swimmer | undefined
   let near = 30 // how close, in canvas units, a click must land
@@ -559,7 +580,14 @@ function selectProject(a: Agent | null) {
     li.append(label, el('small', ` · ${pr.state}`))
     recent.append(li)
   }
-  box.replaceChildren(who, facts, el('h3', 'Latest pull requests'), recent)
+  const dive = el('button', 'See its open pull requests', 'ghost dive')
+  dive.type = 'button'
+  dive.addEventListener('click', () => {
+    showMode('pulls')
+    $<HTMLInputElement>('#pullrepo').value = p.repo
+    void loadPulls(p.repo)
+  })
+  box.replaceChildren(who, facts, dive, el('h3', 'Latest pull requests'), recent)
 }
 
 async function loadProjects(input: string) {
@@ -584,12 +612,93 @@ async function loadProjects(input: string) {
   }
 }
 
-function showMode(next: 'ecosystem' | 'projects') {
+// ---- Pull requests mode: one open pull request per fish ------------------------------------------
+
+function usePulls(set: PullSet) {
+  pullSet = set
+  shoal = placePulls(set.pulls)
+  pullFocus = null
+  const t = tally(set)
+  const shown = `${set.exactTotal ? '' : 'about '}${set.total.toLocaleString('en-US')} open` + (set.total > t.drawn ? ` · ${t.drawn} drawn` : '')
+  $('#pullreadout').textContent =
+    `${set.repo}${set.source === 'synthetic' ? ' (synthetic)' : ''} · ${shown} · ${t.quiet} quiet for ${STALE_DAYS}+ days · ${t.drafts} drafts · ${t.waiting} awaiting review` +
+    (set.detailed ? ` · ${t.failing} failing checks · ${t.approved} approved` : '')
+  const notices = $<HTMLDetailsElement>('#pullnotices')
+  notices.open = set.source === 'recorded'
+  notices.firstElementChild!.textContent = `Data boundaries (${set.notices.length})`
+  notices.lastElementChild!.replaceChildren(...set.notices.map((n) => el('li', n)))
+  $('#pulllegend').replaceChildren(...set.authors.map((author, i) => {
+    const li = el('li')
+    const button = el('button')
+    button.type = 'button'
+    button.title = 'Show only this author'
+    button.setAttribute('aria-pressed', 'false')
+    button.style.setProperty('--c', COLORS[i % COLORS.length])
+    const mine = set.pulls.filter((p) => p.group === i).length
+    const bar = el('u')
+    bar.style.width = `${(100 * mine) / (t.drawn || 1)}%`
+    button.append(silhouette(i), el('span', author), el('b', String(mine)), bar)
+    button.addEventListener('click', () => {
+      pullFocus = pullFocus === i ? null : i
+      $('#pulllegend').classList.toggle('filtered', pullFocus !== null)
+      for (const [j, row] of [...$('#pulllegend').children].entries()) row.firstElementChild!.setAttribute('aria-pressed', String(j === pullFocus))
+    })
+    li.append(button)
+    return li
+  }))
+  $('#pulllegend').classList.remove('filtered')
+  selectPull(null)
+}
+
+function selectPull(f: Swim | null) {
+  pullPicked = f
+  const box = $('#pull')
+  if (!f) return box.replaceChildren(el('p', 'Click a fish to read the pull request behind it.', 'hint'))
+  const p = f.pull
+  const who = el('p', '', 'who')
+  who.style.setProperty('--c', COLORS[p.group % COLORS.length])
+  who.append(silhouette(p.group), el('strong', `#${p.number}`), el('span', p.author))
+  const title = el('p', '', 'title')
+  const name = el(p.url ? 'a' : 'span', p.title || 'Untitled')
+  if (name instanceof HTMLAnchorElement) Object.assign(name, { href: p.url, target: '_blank', rel: 'noopener' })
+  title.append(name)
+  const facts = el('dl')
+  const row = (label: string, value: string, tone = '') => facts.append(el('dt', label), el('dd', value, tone))
+  const unread = 'not read: needs a token'
+  row('Opened', `${p.created.slice(0, 10)} · ${p.ageDays} days ago`)
+  row('Last activity', `${p.updated.slice(0, 10)} · quiet for ${p.quietDays} days`, p.quietDays >= STALE_DAYS ? 'bad' : '')
+  row('Size', p.lines === null ? unread : `${p.lines.toLocaleString('en-US')} lines changed`)
+  row('Review', (p.review ?? unread) + (p.waiting ? ' · review requested' : ''), p.review === 'approved' ? 'good' : p.review === 'changes requested' ? 'bad' : '')
+  row('Checks', p.checks ?? unread, p.checks === 'failing' ? 'bad' : p.checks === 'passing' ? 'good' : '')
+  row('State', p.draft ? 'draft' : 'ready for review')
+  if (p.labels.length) row('Labels', p.labels.join(', '))
+  box.replaceChildren(who, title, facts)
+}
+
+// A blank input shows the built-in fictional repository, which costs no requests.
+async function loadPulls(input: string) {
+  if (!input.trim()) return usePulls(demoPulls())
+  const button = $<HTMLButtonElement>('#pullload')
+  button.disabled = true
+  $('#error').textContent = 'Loading pull requests...'
+  try {
+    usePulls(await fetchPulls(input))
+    $('#error').textContent = ''
+  } catch (err) {
+    $('#error').textContent = `Could not load pull requests: ${(err as Error).message} The previous tank is still shown.`
+  } finally {
+    button.disabled = false
+  }
+}
+
+function showMode(next: Mode) {
   mode = next
   document.body.dataset.mode = next
   $('#tab-eco').setAttribute('aria-pressed', String(next === 'ecosystem'))
   $('#tab-projects').setAttribute('aria-pressed', String(next === 'projects'))
+  $('#tab-pulls').setAttribute('aria-pressed', String(next === 'pulls'))
   if (next === 'projects' && !projects) void loadProjects('')
+  if (next === 'pulls' && !pullSet) usePulls(demoPulls())
 }
 
 // ---- The tank (every animation frame) -----------------------------------------------------------
@@ -624,6 +733,56 @@ function frame(now: number) {
       ctx.fill()
       ctx.fillStyle = a === picked ? '#06141f' : '#e6eef0'
       ctx.fillText(a.project.name, x, y + 0.5)
+    }
+    return
+  }
+  if (mode === 'pulls') {
+    anim += dt // like Projects, this view has no replay to pause
+    swim(shoal, dt, anim)
+    // The water shows how much of what is drawn has failing checks.
+    murk += ((pullSet?.detailed && shoal.length ? tally(pullSet).failing / shoal.length : 0) - murk) * 0.03
+    const swimmers: Swimmer[] = shoal.map((f) => ({
+      id: f.pull.number, lineage: f.pull.group,
+      genome: {
+        bodyLength: sizeOfDiff(f.pull.lines), // bigger: more lines changed
+        finSize: Math.min(1, Math.log2(1 + f.pull.ageDays) / Math.log2(366)), // longer fins: open longer
+        speed: f.speed / 40, hue: 0.5, metabolism: 0.5, perceptionRange: 0.5, lifespan: 0.5, mutationRate: 0.5,
+      },
+      x: f.x, y: f.y, z: f.z, ux: Math.cos(f.yaw), uy: 0, uz: Math.sin(f.yaw),
+      energy: Math.max(0, 1 - f.pull.quietDays / STALE_DAYS), // pale: quiet
+      grown: 1,
+      dim: f.pull.draft || (pullFocus !== null && f.pull.group !== pullFocus), // faded: a draft, or filtered out
+    }))
+    tank.draw(swimmers, [], murk, anim)
+    ctx.clearRect(0, 0, W, H)
+    ctx.font = '500 10px "Martian Mono Variable", ui-monospace, monospace'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    for (const f of shoal) {
+      if (pullFocus !== null && f.pull.group !== pullFocus) continue
+      const [x, y] = tank.project(f.x, f.y, f.z)
+      if (f.pull.review === 'approved') {
+        ctx.strokeStyle = 'rgba(169, 214, 208, 0.9)'
+        ctx.lineWidth = 1.25
+        ctx.beginPath()
+        ctx.arc(x, y, 15, 0, TAU)
+        ctx.stroke()
+      }
+      if (f.pull.checks === 'failing') {
+        ctx.fillStyle = '#e2796b'
+        ctx.beginPath()
+        ctx.arc(x + 11, y - 12, 3.5, 0, TAU)
+        ctx.fill()
+      }
+      if (f === pullPicked) {
+        ctx.strokeStyle = '#fff'
+        ctx.lineWidth = 1.5
+        ctx.beginPath()
+        ctx.arc(x, y, 21, 0, TAU)
+        ctx.stroke()
+        ctx.fillStyle = '#fff'
+        ctx.fillText(`#${f.pull.number}`, x, y - 31)
+      }
     }
     return
   }
@@ -722,6 +881,11 @@ function frame(now: number) {
 
 $('#tab-eco').addEventListener('click', () => showMode('ecosystem'))
 $('#tab-projects').addEventListener('click', () => showMode('projects'))
+$('#tab-pulls').addEventListener('click', () => showMode('pulls'))
+$<HTMLFormElement>('#pullsource').addEventListener('submit', (e) => {
+  e.preventDefault()
+  void loadPulls($<HTMLInputElement>('#pullrepo').value)
+})
 $<HTMLFormElement>('#psource').addEventListener('submit', (e) => {
   e.preventDefault()
   void loadProjects($<HTMLInputElement>('#prepos').value)

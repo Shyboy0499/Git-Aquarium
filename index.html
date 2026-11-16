@@ -14,6 +14,7 @@
         <nav class="tabs" aria-label="Mode">
           <button type="button" id="tab-eco" aria-pressed="true">Ecosystem</button>
           <button type="button" id="tab-projects" aria-pressed="false">Projects</button>
+          <button type="button" id="tab-pulls" aria-pressed="false">Pull requests</button>
         </nav>
       </div>
       <form id="source" class="eco-only">
@@ -66,6 +67,22 @@
           </form>
           <p id="preadout"></p>
           <details id="pnotices">
+            <summary></summary>
+            <ul></ul>
+          </details>
+        </section>
+
+        <section class="pulls-only" id="pulls" aria-labelledby="pulls-title">
+          <h2 id="pulls-title">Open pull requests <span>one fish each</span></h2>
+          <form id="pullsource">
+            <div class="field">
+              <input id="pullrepo" aria-label="Repository" placeholder="owner/repo (blank shows the built-in demo)" autocomplete="off" spellcheck="false" />
+              <button id="pullload">Load pull requests</button>
+            </div>
+          </form>
+          <p id="pullreadout"></p>
+          <p class="key">Bigger: more lines changed · longer fins: open longer · pale and slow: quiet for 30 days · faded: a draft · red dot: failing checks · ring: approved</p>
+          <details id="pullnotices">
             <summary></summary>
             <ul></ul>
           </details>
@@ -133,6 +150,14 @@
         <section class="projects-only">
           <h2>Projects <span>one repository per body · click to inspect</span></h2>
           <ul id="plegend"></ul>
+        </section>
+        <section class="pulls-only">
+          <h2>Authors <span>one colour and species each · click to filter</span></h2>
+          <ul id="pulllegend"></ul>
+        </section>
+        <section class="pulls-only">
+          <h2>Pull request</h2>
+          <div id="pull"></div>
         </section>
         <section class="eco-only">
           <h2>Organism</h2>

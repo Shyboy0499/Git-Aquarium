@@ -36,9 +36,10 @@ describe('parseLastPage', () => {
 describe('sizeOf', () => {
   it('grows with size and stops at the cap', () => {
     expect(sizeOf(0)).toBeCloseTo(0.65)
-    expect(sizeOf(256)).toBeCloseTo(1.2)
-    expect(sizeOf(1000)).toBeCloseTo(1.2)
+    expect(sizeOf(32_767)).toBeCloseTo(1.2)
+    expect(sizeOf(1_000_000)).toBeCloseTo(1.2)
     expect(sizeOf(10)).toBeGreaterThan(0.65)
+    expect(sizeOf(20_500) - sizeOf(300)).toBeGreaterThan(0.2) // a small and a very large project still look different
   })
 })
 
@@ -98,8 +99,25 @@ describe('readProject', () => {
   it('falls back to the repository name when there is no description', () => {
     const p = readProject('vitejs/vite', { ...meta, description: null }, [], [], NOW)
     expect(p.theme).toBe('vite')
-    expect(p.prs.total).toBe(0)
+    expect(p.prs).toMatchObject({ total: 0, exact: true })
     expect(p.size).toBeCloseTo(0.65)
+  })
+
+  it('estimates totals when the lists were cut off, and says they are estimates', () => {
+    // 96 pages of pull requests, and a full page of the issues list whose newest entry is number 21000.
+    const pulls = Array.from({ length: 100 }, (_, i) => ({ number: 20_990 - 2 * i, state: 'open', created_at: '2025-12-01T00:00:00Z' }))
+    const items = Array.from({ length: 100 }, (_, i) => ({ number: 21_000 - i, state: 'open', created_at: '2025-12-01T00:00:00Z', ...(i % 2 ? { pull_request: {} } : {}) }))
+    const p = readProject('vitejs/vite', meta, pulls, items, NOW, 96)
+    expect(p.prs).toMatchObject({ total: 9600, exact: false }) // 96 pages of 100: right to within a page
+    expect(p.issues.recent).toHaveLength(50) // the pull requests mixed into the list are not issues
+    expect(p.issues).toMatchObject({ total: 11_500, exact: false }) // a limit: 21000 numbers less about 9600 pull requests
+    expect(p.size).toBeCloseTo(sizeOf(9600))
+    // With the exact count from search, that is the total, however the numbering looks.
+    expect(readProject('vitejs/vite', meta, pulls, items, NOW, 96, 8935).issues).toMatchObject({ total: 8935, exact: true })
+
+    const small = readProject('vitejs/vite', meta, pulls.slice(0, 3), items.slice(0, 10), NOW)
+    expect(small.prs).toMatchObject({ total: 3, exact: true })
+    expect(small.issues).toMatchObject({ total: 5, exact: true })
   })
 })
 
@@ -115,16 +133,17 @@ describe('fetchProjects', () => {
           '<https://api.github.com/repositories/1/pulls?page=3>; rel="last"')
       }
       if (url.includes('/repos/good/repo/issues')) return json([])
+      if (url.includes('/search/issues')) return url.includes('good') ? json({ total_count: 42 }) : new Response('{}', { status: 403 })
       return json({
         name: 'repo', description: 'A repo', html_url: 'https://github.com/good/repo',
         created_at: '2020-01-01T00:00:00Z', pushed_at: new Date(NOW - 2 * DAY).toISOString(), archived: false,
       })
     }))
     try {
-      const set = await fetchProjects('good/repo missing/repo', NOW)
+      const set = await fetchProjects('missing/repo good/repo', NOW)
       expect(set.projects).toHaveLength(1)
-      expect(set.projects[0].prs.total).toBe(300) // page 3 at 100 per page: a lower bound
-      expect(set.projects[0].issues.total).toBe(0)
+      expect(set.projects[0].prs).toMatchObject({ total: 300, exact: false }) // page 3 at 100 per page: 201 to 300
+      expect(set.projects[0].issues).toMatchObject({ total: 42, exact: true }) // the exact count from search
       expect(set.notices.some((n) => n.includes('missing/repo') && n.includes('not found'))).toBe(true)
       expect(set.notices.some((n) => n.includes('design choice'))).toBe(true)
     } finally {

@@ -8,6 +8,7 @@ import { explain, key, parseAnswer, summarize, unknownEvidence, type Answer, typ
 import { P, RULES, TRAITS, hashState, lifespanTicks, maxEnergy, type EventKind, type Organism, type State } from './sim'
 import { COLORS, createTank, silhouette, type ProjectDraw, type Swimmer } from './tank'
 import { DEFAULT_REPOS, countIssues, countPulls, fetchProjects, type Project, type ProjectSet } from './projects'
+import { drift, placeProjects, type Agent } from './fishschool'
 import type { Command } from './worker'
 
 const $ = <T extends HTMLElement>(selector: string) => document.querySelector<T>(selector)!
@@ -65,9 +66,8 @@ let drawn: Swimmer[] = [] // the living fish as last drawn, for picking with a c
 
 let mode: 'ecosystem' | 'projects' = 'ecosystem'
 let projects: ProjectSet | null = null
-type Body = { id: string; project: Project; x: number; y: number; z: number; yaw: number }
-let bodies: Body[] = []
-let picked: Body | null = null
+let agents: Agent[] = []
+let picked: Agent | null = null
 let projectRev = 0 // bumped when the data changes, so the tank rebuilds its meshes once
 
 const worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' })
@@ -329,9 +329,9 @@ scene.addEventListener('click', (e) => {
   const px = (e.offsetX / scene.clientWidth) * W
   const py = (e.offsetY / scene.clientHeight) * H
   if (mode === 'projects') { // a project body is larger than a fish, so its hit area is wider
-    let best: Body | undefined
+    let best: Agent | undefined
     let near = 40
-    for (const a of bodies) {
+    for (const a of agents) {
       const [x, y] = tank.projectScene(a.x, a.y, a.z)
       const d = Math.hypot(x - px, y - py)
       if (d < near) { near = d; best = a }
@@ -482,31 +482,48 @@ $('#suggest').addEventListener('click', (e) => {
 
 // ---- Projects mode: one repository per body -----------------------------------------------------
 
-function notices() {
+function readout() {
   if (!projects) return
-  const box = $<HTMLDetailsElement>('#pnotices')
-  box.open = true
-  box.firstElementChild!.textContent = `Data boundaries (${projects.notices.length})`
-  box.lastElementChild!.replaceChildren(...projects.notices.map((n) => el('li', n)))
+  const by = (k: string) => projects!.projects.filter((p) => p.lifecycle === k).length
+  const prs = projects.projects.reduce((n, p) => n + p.prs.total, 0)
+  const issues = projects.projects.reduce((n, p) => n + p.issues.total, 0)
+  $('#preadout').textContent =
+    `${projects.projects.length} projects · ${by('active')} active · ${by('quiet')} quiet · ${by('abandoned')} abandoned · ` +
+    `${prs.toLocaleString('en-US')} PRs · ${issues.toLocaleString('en-US')} issues`
+  const notices = $<HTMLDetailsElement>('#pnotices')
+  notices.open = true
+  notices.firstElementChild!.textContent = `Data boundaries (${projects.notices.length})`
+  notices.lastElementChild!.replaceChildren(...projects.notices.map((n) => el('li', n)))
 }
 
-// P3 shows one body per repository, parked in two rows; schooling arrives in P4.
-function placeBodies(list: Project[]): Body[] {
-  return list.map((project, i) => ({
-    id: project.repo, project,
-    x: ((i % 4) - 1.5) * 1.7, y: i < 4 ? 1.25 : 2.5, z: -2.6 - 0.6 * Math.floor(i / 4), yaw: 0,
+function projectLegend() {
+  if (!projects) return
+  $('#plegend').replaceChildren(...projects.projects.map((p) => {
+    const li = el('li')
+    const button = el('button')
+    button.type = 'button'
+    button.dataset.repo = p.repo
+    button.title = 'Inspect this project'
+    button.setAttribute('aria-pressed', String(picked?.id === p.repo))
+    button.append(el('span', p.repo), el('b', `${p.prs.total} PR`), el('u', p.lifecycle))
+    button.addEventListener('click', () => selectProject(agents.find((a) => a.id === p.repo) ?? null))
+    li.append(button)
+    return li
   }))
 }
 
-function selectProject(a: Body | null) {
+function selectProject(a: Agent | null) {
   picked = a
+  for (const button of $('#plegend').querySelectorAll<HTMLButtonElement>('button')) {
+    button.setAttribute('aria-pressed', String(button.dataset.repo === a?.id))
+  }
   const box = $('#project')
   if (!a) return box.replaceChildren(el('p', 'Click a fish, rock, or seaweed to read the repository behind it.', 'hint'))
   const p = a.project
   const pulls = countPulls(p.prs.recent)
   const issues = countIssues(p.issues.recent)
   const who = el('p', '', 'who')
-  who.append(el('strong', p.name), el('span', `${p.repo} · ${p.lifecycle}`))
+  who.append(el('strong', p.name), el('span', `${p.repo} · ${a.kind}`))
   const facts = el('dl')
   const row = (label: string, value: string | Node) => {
     const dd = el('dd')
@@ -552,14 +569,16 @@ async function loadProjects(input: string) {
   try {
     const set = await fetchProjects(input.trim() || DEFAULT_REPOS.join(' '))
     projects = set
-    bodies = placeBodies(set.projects)
+    agents = placeProjects(set.projects)
     picked = null
     projectRev++
-    notices()
+    readout()
+    projectLegend()
     selectProject(null)
     $('#error').textContent = ''
   } catch (err) {
     $('#error').textContent = `Could not load projects: ${(err as Error).message}${projects ? ' The previous tank is still shown.' : ''}`
+    if (!projects) $('#preadout').textContent = 'No projects loaded. Each project costs three GitHub requests; without a token GitHub allows 60 an hour.'
   } finally {
     button.disabled = false
   }
@@ -586,7 +605,8 @@ function frame(now: number) {
   if (!tank) return
   if (mode === 'projects') {
     if (projects && running) anim += dt
-    const items: ProjectDraw[] = bodies.map((a) => ({ id: a.id, project: a.project, x: a.x, y: a.y, z: a.z, yaw: a.yaw }))
+    if (projects) drift(agents, dt, anim)
+    const items: ProjectDraw[] = agents.map((a) => ({ id: a.id, project: a.project, x: a.x, y: a.y, z: a.z, yaw: a.yaw }))
     tank.drawProjects(items, anim, projectRev)
     ctx.clearRect(0, 0, W, H)
     ctx.font = '500 10px "Martian Mono Variable", ui-monospace, monospace'

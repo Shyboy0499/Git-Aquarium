@@ -193,7 +193,7 @@ flowchart TD
 **Current implementation:** a single Vite + TypeScript package whose only runtime dependency is Three.js. The aquarium is drawn in 3D, in place of the 2D PixiJS view proposed in the table above.
 
 - `src/sim.ts`: the simulation and the mapping rules, in three dimensions. Fish turn gradually, cruise level, and school with their own lineage. It has no dependencies and runs in a Web Worker (`src/worker.ts`).
-- `src/dataset.ts`: validates, deduplicates, and freezes repository records, and imports one public repository.
+- `src/dataset.ts`: validates, deduplicates, and freezes repository records, imports one repository for a chosen period, and saves and opens frozen datasets as files.
 - `src/demo.ts`: the fictional demo history.
 - `src/tank.ts`: the 3D scene: sunlight with shadows, rippling light on the sand, depth haze, and four fish species, plants, and rocks modelled in code, so there are no downloaded art assets. It needs WebGL; without it the measurements and event log still work.
 - `src/explain.ts`: the Ecologist's rule-based explanation, the bounded summary a model is given, and the checks applied to a model's answer. Pure functions with no DOM or network.
@@ -203,7 +203,7 @@ flowchart TD
 - `src/fishschool.ts`: the small deterministic drift that moves project bodies in the tank.
 - `vite.config.ts`: the optional model endpoint, `POST /api/explain`, served by `pnpm dev` and `pnpm preview` only. The Anthropic SDK is a development dependency used here and nowhere in the page.
 
-The import calls GitHub's public REST API directly from the browser, so there is no server and no token. That limits it to GitHub's unauthenticated quota of 60 requests per hour (four per import plus one per lineage, so at most twelve) and to the 100 most recent commits, pull requests, and workflow runs; whatever is cut off is listed on screen. React, PixiJS, the workspace split, Fastify, Zod, IndexedDB, and Playwright were not needed to meet the MVP and have not been introduced: the page is plain TypeScript and DOM, the model endpoint is a few lines of dev-server middleware, nothing is saved between visits, and browser checks were run with a script driving headless Chrome rather than a test suite in the repository.
+The import asks for a period (7, 30, or 90 days) and reads GitHub's REST API page by page until that period is covered or its request budget runs out. Without a token it calls GitHub straight from the browser and may spend 30 of the 60 requests an hour GitHub allows; with a token on the local server it may spend 300 of 5,000. A source that stops early is named under Data boundaries with the date it reached, and the replay starts where every source is complete. React, PixiJS, the workspace split, Fastify, Zod, IndexedDB, and Playwright were not needed to meet the MVP and have not been introduced: the page is plain TypeScript and DOM, the model endpoint is a few lines of dev-server middleware, nothing is saved between visits except a dataset you choose to save as a file, and browser checks were run with a script driving headless Chrome rather than a test suite in the repository.
 
 The simulation package will not depend on React, PixiJS, network access, or storage APIs. Rendering will consume state without changing it. AI responses will explain recorded state without controlling organisms.
 
@@ -300,7 +300,7 @@ The initial performance target for a specified desktop test machine is an averag
 
 ### Validation results
 
-Measured on 2026-11-15 on one machine: Apple M5, 24 GB, Node.js 22.21.1, and Chrome 157 running headless with GPU rendering at 1440 by 1000. The unit tests are in the repository (`pnpm test`, 9 tests). The browser checks were run by a script and are not part of the repository. The frame rate, tick time, and stability figures were measured before events were made to act on their own lineage and were not repeated; the two live imports were.
+Measured on 2026-11-15 on one machine: Apple M5, 24 GB, Node.js 22.21.1, and Chrome 157 running headless with GPU rendering at 1440 by 1000. The unit tests are in the repository (`pnpm test`, 25 tests). The browser checks were run by a script and are not part of the repository. The frame rate, tick time, and stability figures were measured before events were made to act on their own lineage and were not repeated; the two live imports were.
 
 | Target | Result |
 | --- | --- |
@@ -314,6 +314,8 @@ Measured on 2026-11-15 on one machine: Apple M5, 24 GB, Node.js 22.21.1, and Chr
 | Offline demo | The demo makes no request to another site. Asking the Ecologist tries the local endpoint and falls back when it is absent |
 | Import, inspect, explain, reset | Pass on a live import of this repository: 26 commits, 4 pull requests, 4 merges, 0 CI runs, with every evidence link pointing to github.com |
 | Per-branch mapping on live data | Pass on a live import of `vitejs/vite`: 8 lineages, 11 workflow runs on their branches, and at most 2 lineages under a CI penalty at once while the others were unaffected |
+| Import by period (measured 2026-11-17) | `vitejs/vite`, 30 days, no token: 30 requests, 7 seconds, a 5-day window (58 commits, 38 pull requests, 234 workflow runs) where one page per source used to give one commit. 90 days with a token: 80 requests, 78 seconds, the whole period (382 commits, 591 pull requests, 2,084 workflow runs) at 60 frames a second. This repository, 30 days, no token: 12 requests |
+| Save and open a dataset | Pass (unit test), and in the browser: a saved file opened with its seed, and a damaged file was refused with the previous dataset left loaded |
 | Phone width (430 px) | Pass: single column with no horizontal scrolling |
 | A browser without WebGL | Pass in Chrome with WebGL disabled: a message replaces the tank, and the measurements, chart, event log, lineage filter, pause, and Ecologist all work |
 | 15-minute stability run and repeated resets | Pass: 72,000 ticks at 4x in 15 minutes at a steady 60 frames per second, memory between 35 and 57 MB with no growth, no errors, and 20 resets that each returned the same tick-0 state hash |
@@ -325,7 +327,8 @@ Not validated:
 - **Across engines.** Node.js 22 and Chrome 157 give different state hashes from tick 0, because `Math.cos` differs in the last bit for one starting direction. Replays are reproducible within one engine, which is the scope stated under [Reproducibility](#reproducibility).
 - **The real model.** No API key was used. See [AI Ecologist](#ai-ecologist).
 - **Frame rate with 200 organisms.** Only the simulation tick time was measured at that size.
-- **Busy repositories replay a short window.** A live import of `vitejs/vite` held only two commits, because its 100 most recent workflow runs span so little time. The import says so under Data boundaries; a longer history needs more than one page per source (issue #8). With so little history, the differences between its lineages are still mostly chance.
+- **Busy repositories need a token for a long window.** Without one, 30 requests covered five days of `vitejs/vite`, and the import says where it stopped under Data boundaries. With one, 90 days took 78 seconds, most of it GitHub answering workflow-run searches one page at a time.
+- **Each branch's commit list repeats shared history.** A branch cut from the default branch is asked for the same commits again, which spends requests. They are counted once.
 
 ### Three-minute demonstration
 
@@ -350,13 +353,21 @@ pnpm test    # determinism, snapshot resume, bounds, mapping rules, import norma
 pnpm build   # type-check and production build
 ```
 
-The app opens on the synthetic demo, which needs no network access. To replay a real project, enter a public repository as `owner/repo` or a github.com URL and press Import. Reset replays the same frozen dataset from the same seed.
+The app opens on the synthetic demo, which needs no network access. To replay a real project, enter a public repository as `owner/repo` or a github.com URL, choose how far back to read, and press Import. Reset replays the same frozen dataset from the same seed.
+
+For a busy repository, give the local server a read-only token; it is used only by the server and never reaches the page:
+
+```bash
+GITHUB_TOKEN=your-token pnpm dev
+```
+
+**Save as file** downloads the frozen dataset with its seed, and **Open file** loads one, so a replay can be handed to someone else and run again without importing. The same file and seed give the same state in the same browser engine.
 
 ## Access and data handling
 
 The MVP will read public repositories only and will not modify code, create commits in imported repositories, merge pull requests, or delete branches.
 
-Optional GitHub and model credentials will remain on the server. Repository text will be treated as untrusted data, and model requests will use structured summaries rather than source-code uploads. Today no GitHub credential is used at all, and the optional model key is read from the environment of the local dev server and never reaches the page.
+Optional GitHub and model credentials will remain on the server. Repository text will be treated as untrusted data, and model requests will use structured summaries rather than source-code uploads. Today the optional GitHub token and the optional model key are both read from the environment of the local dev server and never reach the page. The server uses the token only to forward an import's reads (a repository, its branches, commits, pull requests, and workflow runs); a token that can read private repositories lets the import read those too, so a fine-grained, read-only token limited to public repositories is the safe choice.
 
 ## Inspiration and license
 

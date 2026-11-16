@@ -50,20 +50,21 @@ The population figures are simulated measurements from one seeded run. They are 
 
 ## Projects: one repository, one fish
 
-Projects is a second reading of the tank, switched by the `Projects` tab beside the title. Each repository becomes one body: a fish while it is maintained, a seaweed once it has not been pushed to for 90 days, and a rock once it is archived or untouched for a year.
+Projects is a second reading of the tank, switched by the `Projects` tab beside the title. Each repository becomes one body: a fish while it is maintained, a grey and dull fish once nobody has pushed to it for 90 days, a clump of seaweed once that reaches a year, and a rock once it is archived. Every body carries its repository's name.
 
 - **The spine is the project's theme**: the repository description, or its name when it has none.
 - **Each rib is a pull request.** Merged ribs are pale bone, open ribs amber, and closed-without-merge ribs slate. Up to sixty ribs are drawn so a large project does not turn into a white blur; the panel reports the full count.
 - **Each scale is an issue.** Closed issues are pale scales, open issues dark gaps in the coat, and issues labelled `question` are gold.
-- **Length and height follow the number of pull requests** on a log scale, so a project with 300 pull requests stays visible beside one with 20,500.
-- **Gloss and swim speed follow recent upkeep**: a project pushed to this week swims faster than one last touched in spring.
+- **Length and height follow the number of pull requests** on a log scale, so a project with 300 pull requests stays visible beside one with 20,500 and the two still look different.
+- **Swim speed follows recent activity**: the number of pull requests and issues opened in the last 90 days.
 - **Age is read in the panel, not in the tank**: creation date, years, last push, and the lifecycle decision with the date that decided it.
 
 Click a body to read its panel: project link and theme, age, upkeep, the bone split (merged, open, closed), the scale split (open issues, questions), and the five most recent pull requests with links. The reading bar counts projects, lifecycle states, pull requests, and issues.
 
-Data boundaries: each project costs three unauthenticated GitHub requests (the repository, the latest hundred pull requests, the latest hundred issues), and GitHub allows 60 an hour per address, so loading eight projects uses a third of an hour's budget. Totals are lower bounds from GitHub's page count; only the latest hundred of each list are drawn. When a project cannot be read its error is listed and the rest still load.
+Data boundaries: each project costs three unauthenticated GitHub requests (the repository, the latest hundred pull requests, the latest hundred issues), and GitHub allows 60 an hour per address, so loading eight projects uses 24 of them. Only the latest hundred of each list are drawn. For a large project the pull request total is marked "about": GitHub reports pages, not a count, so it is rounded up to the next hundred. The issue total is exact and comes from one search request per project. Search allows ten a minute; when it refuses, the total is marked "up to" and is only a limit. When a project cannot be read its error is listed and the rest still load.
 
 ## The idea
+
 A repository becomes an aquarium. Its branches provide the identities of organism lineages, and each lineage contains multiple simulated individuals. Commits introduce resources, pull requests create visible interactions, and supported CI results change the simulated environment according to explicit rules.
 
 The organisms also have their own lives. They compete for food, spend energy to move, and pass traits to their offspring. Git history supplies environmental inputs; the simulation determines how individuals respond.

@@ -8,11 +8,11 @@ things that were measured, never for guesses. This note fixes the decisions befo
 | # | Question | Decision | Why it matters |
 | --- | --- | --- | --- |
 | D1 | Replace the ecosystem or add a mode? | A **second mode**, with the ecosystem replay kept as `Ecosystem` | The new view is a snapshot of a repository; the old one is a deterministic replay. They cannot share a data contract |
-| D2 | Which pull requests count? | **All observed PRs**: merged, open, and closed; the latest 100 fetched, the true total from the pagination header | The history is what a skeleton should show. Open-only would make a dead project look boneless |
+| D2 | Which pull requests count? | **All observed PRs**: merged, open, and closed; the latest 100 fetched, the total from the pagination header (rounded up to a whole page) | The history is what a skeleton should show. Open-only would make a dead project look boneless |
 | D3 | What is a "question"? | **All issues** as scales; **open issues** as missing scales; the `question` label gets a distinct colour | The label is optional and many repositories never use it; counting it alone would leave most bodies bare |
 | D4 | What counts as "no longer maintained"? | `archived` → a rock; `pushed_at` older than **365 days** → seaweed; older than **90 days** → a quiet fish | It is a product decision shown as fact, so the panel always prints the last push date beside it |
-| D5 | How many per tank? | **8 by default, 12 maximum**, editable | 8 × 3 requests = 24, so two loads fit inside GitHub's unauthenticated 60 an hour |
-| D6 | How big is a body? | `size = 0.65 + 0.55 × log2(1 + prs) / log2(257)`, capped | Keeps a 10,000-PR project from filling the tank. The log scale is the only honest near-linear scale |
+| D5 | How many per tank? | **8 by default, 12 maximum**, editable | 8 × 3 requests = 24, so two loads fit inside GitHub's unauthenticated 60 an hour. One search request per project (ten a minute) gives the exact issue count |
+| D6 | How big is a body? | `size = 0.65 + 0.55 × log2(1 + prs) / 15`, capped at 32,767 PRs | Keeps a 10,000-PR project from filling the tank. The first cap, 256, made every established project the same size, so the scale now runs to 32,767 |
 | D7 | Can a rib be clicked? | **Not in v1.** The panel lists the five most recent PRs instead | Per-rib picking needs per-rib geometry ids; the panel gives the same information for less work |
 
 ## The mapping
@@ -23,7 +23,8 @@ things that were measured, never for guesses. This note fixes the decisions befo
 | One pull request | One rib: bone-coloured when merged, amber when open, slate when closed unmerged |
 | Pull request count | Body length and height |
 | One issue | One scale: pale when closed, a dark gap when open, gold when labelled `question` |
-| Recent push activity | Gloss and swim speed |
+| Pull requests and issues opened in the last 90 days | Swim speed |
+| No push for 90 days | Grey, dull skin |
 | Creation date | Age, shown in the panel only |
 
 ## Data boundaries that must stay visible
@@ -31,8 +32,9 @@ things that were measured, never for guesses. This note fixes the decisions befo
 - Each project costs three unauthenticated requests (repository, latest 100 pull requests, latest 100 issues).
 - `open_issues_count` counts issues **and** pull requests; it is never printed as an issue count.
 - The issues endpoint returns pull requests too; items carrying `pull_request` are filtered out.
-- The true total comes from the `Link: <...>; rel="last"` page number; without it the list length is exact.
-- Counts are lower bounds when the latest hundred were not the whole history.
+- The pull request total comes from the `Link: <...>; rel="last"` page number, so it is rounded up to a whole page and shown as "about"; without that header the list length is exact.
+- The issues list has no last page (it is paged by cursor), so the exact issue count comes from one search request per project. When search refuses, the total is shown as "up to": the highest issue number less the pull requests, which also counts discussions.
+- Every body is labelled with its repository's name, so a rock or seaweed cannot be mistaken for scenery.
 - The mapping from a repository to a living thing is a design choice, not a measurement of the code.
 
 ## Acceptance for the phases that follow

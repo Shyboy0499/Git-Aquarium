@@ -10,7 +10,7 @@ Git Aquarium is an artificial-life simulator that turns GitHub development activ
 
 The goal is to make software history visible, explorable, and explainable through **artificial life, reproducible replay, and evidence-based interpretation**.
 
-> **Project status: the four-week MVP is implemented.** Running today: a seeded, deterministic artificial-life simulation (foraging, energy, reproduction, inheritance, mutation, death), the Git-to-ecology mapping rules, an offline synthetic demo, import of one public GitHub repository, replay with pause, 1x / 2x / 4x speed, reset, and seed, organism inspection, lineage filtering, a population chart, and the Ecologist. The Ecologist explains by fixed rules unless a model key is supplied; the model path was tested against a stand-in server and has not been run against the real API. Measured results and known gaps are under [Validation results](#validation-results). Sections written in the future tense describe the original proposal, and each says where the implementation differs. A second view, Projects, maps one repository to one body: pull requests as bones, issues as scales, and upkeep as movement.
+> **Project status: the four-week MVP is implemented.** Running today: a seeded, deterministic artificial-life simulation (foraging, energy, reproduction, inheritance, mutation, death), the Git-to-ecology mapping rules, an offline synthetic demo, import of one public GitHub repository, replay with pause, 1x / 2x / 4x speed, reset, and seed, organism inspection, lineage filtering, a population chart, and the Ecologist. The Ecologist explains by fixed rules unless a model key is supplied; the model path was tested against a stand-in server and has not been run against the real API. Measured results and known gaps are under [Validation results](#validation-results). Sections written in the future tense describe the original proposal, and each says where the implementation differs. A second view, Projects, maps one repository to one body: pull requests as bones, issues as scales, and upkeep as movement. A third, Pull requests, shows one repository's open pull requests as one fish each.
 
 ## What you are watching
 
@@ -62,6 +62,33 @@ Projects is a second reading of the tank, switched by the `Projects` tab beside 
 Click a body to read its panel: project link and theme, age, upkeep, the bone split (merged, open, closed), the scale split (open issues, questions), and the five most recent pull requests with links. The reading bar counts projects, lifecycle states, pull requests, and issues.
 
 Data boundaries: each project costs three unauthenticated GitHub requests (the repository, the latest hundred pull requests, the latest hundred issues), and GitHub allows 60 an hour per address, so loading eight projects uses 24 of them. Only the latest hundred of each list are drawn. For a large project the pull request total is marked "about": GitHub reports pages, not a count, so it is rounded up to the next hundred. The issue total is exact and comes from one search request per project. Search allows ten a minute; when it refuses, the total is marked "up to" and is only a limit. When a project cannot be read its error is listed and the rest still load.
+
+## Pull requests: one open pull request, one fish
+
+![The Pull requests view on its built-in fictional repository: twenty fish of different sizes and colours, some pale, some with a red dot or a ring, and a panel describing the selected pull request](docs/pull-requests.png)
+
+Pull requests is the third view, on its own tab. It shows one repository's open pull requests, each as one fish, so the state of the queue can be read at a glance. Every visible property is a recorded fact about the pull request:
+
+| What you see | What it is |
+| --- | --- |
+| One fish | One open pull request |
+| Colour and species | Its author. The seven authors with the most open pull requests get their own; the rest share one |
+| Body size | Lines changed, on a log scale |
+| Fin length | How long it has been open |
+| Pale and slow | Nothing has happened on it for 30 days |
+| Faded | A draft |
+| Red dot | Its checks are failing |
+| Ring | It has been approved |
+| Murky water | The share of the fish drawn that have failing checks |
+
+Click a fish for the title and link, author, dates, size, review state, checks, and labels. Click an author to fade the others. The reading line under the tank counts open, quiet, draft, awaiting-review, failing, and approved pull requests. In the Projects view, each project's panel has a button that opens its pull requests here.
+
+The tab opens on a built-in fictional repository, which needs no network and is labelled synthetic. For a real repository there are two levels of detail:
+
+- **Without a token:** one unauthenticated GitHub request reads the list. Size, review state, and checks are not in that list, so every fish is the same size, the dot and ring are absent, and the panel says "not read". Absent means unknown, not passing.
+- **With a token:** start the server with `GITHUB_TOKEN=your-token pnpm dev` and the page reads everything in the table through the server. The token stays in the server process and is used for one fixed, read-only query; a read-only token is enough. A busy repository takes about ten seconds.
+
+Data boundaries: the 100 most recently opened pull requests are drawn, and the total is exact with a token and rounded up to the next hundred without one. "Quiet" uses GitHub's last-updated time, which a bot comment also moves. Merged and closed pull requests are not shown, so the tank is the backlog, not the flow. The mapping says nothing about the quality of the work or of its author.
 
 ## The idea
 
@@ -201,7 +228,8 @@ flowchart TD
 - `src/projects.ts`: the Projects mode. Turns one public repository into a project: pull request totals and the latest hundred, issue totals and the latest hundred, upkeep from the last push, and the lifecycle decision. No DOM and no Three.js.
 - `src/fish.ts`: builds the body for a project: a spine for its theme, ribs for pull requests, scales for issues, and the rock and seaweed forms used by abandoned projects.
 - `src/fishschool.ts`: the small deterministic drift that moves project bodies in the tank.
-- `vite.config.ts`: the optional model endpoint, `POST /api/explain`, served by `pnpm dev` and `pnpm preview` only. The Anthropic SDK is a development dependency used here and nowhere in the page.
+- `src/pulls.ts` and `src/pullschool.ts`: the Pull requests view. The first turns GitHub's list of open pull requests, or the detailed answer relayed by the server, into fish and holds the fictional demo; the second moves them. They are drawn by the ecosystem's own renderer.
+- `vite.config.ts`: two optional endpoints served by `pnpm dev` and `pnpm preview` only. `POST /api/explain` is the model endpoint; the Anthropic SDK is a development dependency used here and nowhere in the page. `GET /api/github/open-pulls` reads a repository's open pull requests in detail when `GITHUB_TOKEN` is set.
 
 The import calls GitHub's public REST API directly from the browser, so there is no server and no token. That limits it to GitHub's unauthenticated quota of 60 requests per hour (four per import plus one per lineage, so at most twelve) and to the 100 most recent commits, pull requests, and workflow runs; whatever is cut off is listed on screen. React, PixiJS, the workspace split, Fastify, Zod, IndexedDB, and Playwright were not needed to meet the MVP and have not been introduced: the page is plain TypeScript and DOM, the model endpoint is a few lines of dev-server middleware, nothing is saved between visits, and browser checks were run with a script driving headless Chrome rather than a test suite in the repository.
 
@@ -300,7 +328,7 @@ The initial performance target for a specified desktop test machine is an averag
 
 ### Validation results
 
-Measured on 2026-11-15 on one machine: Apple M5, 24 GB, Node.js 22.21.1, and Chrome 157 running headless with GPU rendering at 1440 by 1000. The unit tests are in the repository (`pnpm test`, 9 tests). The browser checks were run by a script and are not part of the repository. The frame rate, tick time, and stability figures were measured before events were made to act on their own lineage and were not repeated; the two live imports were.
+Measured on 2026-11-15 on one machine: Apple M5, 24 GB, Node.js 22.21.1, and Chrome 157 running headless with GPU rendering at 1440 by 1000. The unit tests are in the repository (`pnpm test`, 27 tests). The browser checks were run by a script and are not part of the repository. The frame rate, tick time, and stability figures were measured before events were made to act on their own lineage and were not repeated; the two live imports were.
 
 | Target | Result |
 | --- | --- |
@@ -356,7 +384,7 @@ The app opens on the synthetic demo, which needs no network access. To replay a 
 
 The MVP will read public repositories only and will not modify code, create commits in imported repositories, merge pull requests, or delete branches.
 
-Optional GitHub and model credentials will remain on the server. Repository text will be treated as untrusted data, and model requests will use structured summaries rather than source-code uploads. Today no GitHub credential is used at all, and the optional model key is read from the environment of the local dev server and never reaches the page.
+Optional GitHub and model credentials will remain on the server. Repository text will be treated as untrusted data, and model requests will use structured summaries rather than source-code uploads. Today the optional model key and the optional GitHub token are both read from the environment of the local dev server and never reach the page. The token is used only by the Pull requests view, for one fixed read-only query; every other request to GitHub is unauthenticated.
 
 ## Inspiration and license
 

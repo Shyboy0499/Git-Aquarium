@@ -1,6 +1,8 @@
-// Serves the app, plus one optional endpoint: POST /api/explain asks a language model to explain a
-// recorded summary. It exists only in `pnpm dev` and `pnpm preview`, and only answers when a key is set
+// Serves the app, plus two optional endpoints that exist only in `pnpm dev` and `pnpm preview`.
+// POST /api/explain asks a language model to explain a recorded summary. It only answers when a key is set
 // (ANTHROPIC_API_KEY=... pnpm dev). The key never leaves this process; without it the page explains by rule.
+// GET /api/github/repos/... forwards an import's reads to GitHub with a token (GITHUB_TOKEN=... pnpm dev),
+// which raises the allowance from 60 to 5,000 requests an hour. Without it the page asks GitHub directly.
 import Anthropic from '@anthropic-ai/sdk'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { defineConfig } from 'vite'
@@ -82,10 +84,36 @@ async function explain(req: IncomingMessage, res: ServerResponse) {
   }
 }
 
+// Only the reads an import makes, and only for a path shaped like owner/repo: the page cannot use the token for anything else.
+const READABLE = /^\/[\w.-]+\/[\w.-]+(\/(branches|pulls|commits|actions\/runs))?$/
+
+async function github(req: IncomingMessage, res: ServerResponse) {
+  const reply = (status: number, body: string, headers: Record<string, string> = {}) => {
+    res.statusCode = status
+    for (const [name, value] of Object.entries({ 'content-type': 'application/json', ...headers })) res.setHeader(name, value)
+    res.end(body)
+  }
+  const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN
+  if (req.method !== 'GET') return reply(405, '{"reason":"method"}')
+  if (!token) return reply(503, '{"reason":"unconfigured"}') // no x-proxied header, so the page asks GitHub itself
+  const url = new URL(req.url ?? '', 'http://local') // only the path and query are used; the host is fixed below
+  if (!READABLE.test(url.pathname)) return reply(400, '{"reason":"path"}')
+  try {
+    const answer = await fetch(`https://api.github.com/repos${url.pathname}${url.search}`, {
+      headers: { accept: 'application/vnd.github+json', authorization: `Bearer ${token}` },
+    })
+    const limits = ['x-ratelimit-limit', 'x-ratelimit-remaining', 'x-ratelimit-reset']
+      .flatMap((name) => (answer.headers.has(name) ? [[name, answer.headers.get(name)!]] : []))
+    reply(answer.status, await answer.text(), { 'x-proxied': '1', ...Object.fromEntries(limits) })
+  } catch {
+    reply(502, '{"reason":"unavailable"}', { 'x-proxied': '1' })
+  }
+}
+
 export default defineConfig({
   plugins: [{
     name: 'ecologist',
-    configureServer: (server) => void server.middlewares.use('/api/explain', explain),
-    configurePreviewServer: (server) => void server.middlewares.use('/api/explain', explain),
+    configureServer: (server) => void server.middlewares.use('/api/explain', explain).use('/api/github/repos', github),
+    configurePreviewServer: (server) => void server.middlewares.use('/api/explain', explain).use('/api/github/repos', github),
   }],
 })

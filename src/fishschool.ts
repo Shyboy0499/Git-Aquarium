@@ -23,8 +23,7 @@ const FLOOR = -0.15
 // A deterministic layout: the same projects always start in the same places.
 export function placeProjects(projects: Project[]): Agent[] {
   return projects.map((project, i) => {
-    // Abandoned forms arrive in P5; every project swims as a fish until then.
-    const kind: Kind = 'fish'
+    const kind: Kind = project.lifecycle === 'abandoned' ? (project.archived ? 'rock' : 'seaweed') : 'fish'
     const angle = (i / Math.max(1, projects.length)) * Math.PI * 2
     return {
       id: project.repo,

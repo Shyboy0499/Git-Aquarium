@@ -2,7 +2,7 @@ import '@fontsource-variable/fraunces'
 import '@fontsource-variable/fraunces/wght-italic.css'
 import '@fontsource-variable/martian-mono'
 import './style.css'
-import { importRepo, type Dataset } from './dataset'
+import { importRepo, openDataset, saveDataset, type Dataset } from './dataset'
 import { demo } from './demo'
 import { explain, key, parseAnswer, summarize, unknownEvidence, type Answer, type Claim, type Context, type Sample } from './explain'
 import { P, RULES, TRAITS, hashState, lifespanTicks, maxEnergy, type EventKind, type Organism, type State } from './sim'
@@ -169,13 +169,37 @@ $('#source').addEventListener('submit', async (e) => {
   button.disabled = true
   $('#error').textContent = 'Importing...'
   try {
-    use(await importRepo($<HTMLInputElement>('#repo').value))
+    use(await importRepo(
+      $<HTMLInputElement>('#repo').value, Number($<HTMLSelectElement>('#period').value), Date.now(),
+      (requests) => { button.textContent = `${requests} read` }, // the request budget, counted as it is spent
+    ))
     $('#error').textContent = ''
   } catch (err) {
     $('#error').textContent = `Import failed: ${(err as Error).message} The previous dataset is still loaded.`
   } finally {
     button.disabled = false
+    button.textContent = 'Import'
   }
+})
+$('#save').addEventListener('click', () => {
+  const a = el('a')
+  a.href = URL.createObjectURL(new Blob([saveDataset(data, Number($<HTMLInputElement>('#seed').value))], { type: 'application/json' }))
+  a.download = `git-aquarium-${data.repo.replace(/[^\w.-]+/g, '-')}.json`
+  a.click()
+  URL.revokeObjectURL(a.href)
+})
+$('#open').addEventListener('click', () => $<HTMLInputElement>('#file').click())
+$('#file').addEventListener('change', async (e) => {
+  const input = e.target as HTMLInputElement
+  try {
+    const { dataset, seed } = openDataset(await input.files![0].text())
+    $<HTMLInputElement>('#seed').value = String(seed)
+    use(dataset)
+    $('#error').textContent = ''
+  } catch (err) {
+    $('#error').textContent = `${(err as Error).message} The previous dataset is still loaded.`
+  }
+  input.value = '' // so choosing the same file again fires a change
 })
 $('#demo').addEventListener('click', () => use(demo))
 $('#controls').addEventListener('submit', (e) => {

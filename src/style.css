@@ -79,6 +79,10 @@ input {
   outline: 0;
 }
 #repo { width: min(300px, 52vw); padding: 10px 6px 10px 16px; }
+#period { padding: 0 6px; color: var(--dim); font: 400 12px/1 var(--mono); background: none; border: 0; border-left: 1px solid var(--line); outline: 0; }
+#period:focus-visible { color: var(--glow); }
+#period option { color: #111; }
+#save { margin-top: 12px; }
 input::placeholder { color: #54737d; }
 
 button {

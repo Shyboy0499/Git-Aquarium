@@ -181,10 +181,16 @@ test('GitHub import: attributes events to branches, dedupes, and reports what is
   const many = Array.from({ length: 100 }, (_, i) => commit(`s${i}`, new Date(Date.UTC(2026, 1, 1 + i)).toISOString()))
   const cut = fromGitHub('o/r', {
     repo: { default_branch: 'main' }, branches: [{ name: 'main' }], commits: { main: many }, runs: null,
-    pulls: [{ number: 1, created_at: '2025-01-01T00:00:00Z', head: { ref: 'old' }, base: { ref: 'main' } }],
+    pulls: [
+      { number: 1, created_at: '2026-01-20T00:00:00Z', head: { ref: 'old' }, base: { ref: 'main' } },
+      { number: 2, created_at: '2025-01-01T00:00:00Z', head: { ref: 'older' }, base: { ref: 'main' } },
+    ],
+    since: Date.UTC(2026, 0, 15), cut: { 'commits on main': Date.UTC(2026, 1, 1) },
   })
-  expect(cut.events).toHaveLength(100) // the PR predates the truncated commit window, so it is left out and reported
-  expect(cut.notices.join(' ')).toMatch(/Only the 100 most recent commits on main.*1 older records were left out/)
+  // PR 1 is inside the requested period but before the commits reach, so it is left out and reported;
+  // PR 2 is before the period that was asked for, so it is simply not part of the question.
+  expect(cut.events).toHaveLength(100)
+  expect(cut.notices.join(' ')).toMatch(/Stopped early.*commits on main \(back to 2026-02-01\).*starts 2026-02-01; 1 older records were left out/)
   expect(cut.notices.join(' ')).toMatch(/Actions data was unavailable/)
 
   const busy = fromGitHub('o/r', { // more branches than lineages: the busiest are kept

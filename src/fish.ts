@@ -39,10 +39,11 @@ function waving<T extends THREE.Material>(material: T, sway = false) {
   return material
 }
 
-const skinMaterial = waving(new THREE.MeshStandardMaterial({
-  color: '#6fb6c9', transparent: true, opacity: 0.68, roughness: 0.22, metalness: 0.08,
-  side: THREE.DoubleSide, depthWrite: false,
+const skin = (color: string, roughness: number) => waving(new THREE.MeshStandardMaterial({
+  color, transparent: true, opacity: 0.68, roughness, metalness: 0.08, side: THREE.DoubleSide, depthWrite: false,
 }))
+const skinMaterial = skin('#6fb6c9', 0.22)
+const quietSkin = skin('#87969a', 0.8) // a project nobody has pushed to for 90 days: grey and dull
 const spineMaterial = waving(new THREE.MeshStandardMaterial({ color: SPINE, roughness: 0.5, metalness: 0.1 }))
 const ribsMaterial = (color: string) => waving(new THREE.MeshStandardMaterial({ color, roughness: 0.45, metalness: 0.2 }))
 const ribs = { merged: ribsMaterial(MERGED), open: ribsMaterial(OPEN), closed: ribsMaterial(CLOSED) }
@@ -89,8 +90,8 @@ function buildFish(p: Project): THREE.Group {
     new THREE.Vector2(-1.32, -0.4), new THREE.Vector2(-0.92, -0.16),
   ]))
   tail.scale(size, size, size)
-  const skin = merged([body, tail], skinMaterial)
-  if (skin) group.add(skin)
+  const coat = merged([body, tail], p.lifecycle === 'quiet' ? quietSkin : skinMaterial)
+  if (coat) group.add(coat)
 
   const spine = new THREE.CatmullRomCurve3([
     new THREE.Vector3(-1.04 * half, 0.03 * height, 0),
